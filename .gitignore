@@ -5,7 +5,8 @@ __pycache__/
 .venv/
 .pytest_cache/
 .speclint-cache/
-.claude/
+.claude/scheduled_tasks.lock
+.claude/settings.local.json
 dist/
 build/
 .coverage
