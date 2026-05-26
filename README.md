@@ -258,6 +258,10 @@ Action inputs: `path`, `base-ref`, `fail-on`, `comment`, `python-version`,
 
 ## Plugins — overriding and extending rules
 
+Full walkthrough: [`docs/writing-rules.md`](docs/writing-rules.md) —
+end-to-end plugin skeleton, IR reference, testing harness, and an
+honest comparison with ESLint's plugin model.
+
 speclint discovers rule packages via Python entry points. To add or
 override rules, ship a small package:
 
@@ -306,9 +310,12 @@ def check(ir, config):
 
 
 def register():
-    from . import __init__ as self_mod
-    return collect_rules_from(self_mod)
+    import sys
+    return collect_rules_from(sys.modules[__name__])
 ```
+
+For real packages with multiple rules, put each in its own module and
+import them inside `register()` — see [`docs/writing-rules.md`](docs/writing-rules.md).
 
 Activate it in `.speclint.yml`:
 
