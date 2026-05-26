@@ -13,6 +13,7 @@ from typing import Any
 from ...ir.types import SpecIR
 from ..registry import rule
 from ..types import ExpectedFinding, Finding, Fixture
+from ._metadata import extract_strings
 
 
 _FIXTURES = [
@@ -78,6 +79,32 @@ _FIXTURES = [
             ExpectedFinding(file="contract.yaml", message_contains="3 file(s)"),
         ),
     ),
+    Fixture(
+        name="nested-field-fires-when-code-drifts",
+        files={"README.md": "# x\n"},
+        metadata={
+            "required_facts": [
+                {"artifact": {"path": "src/x/a.py"}},
+            ],
+        },
+        changed_paths=("src/x/a.py",),
+        options={"field": "required_facts[*].artifact.path"},
+        expects=(
+            ExpectedFinding(file="contract.yaml", message_contains="src/x/a.py"),
+        ),
+    ),
+    Fixture(
+        name="nested-field-no-touch-no-finding",
+        files={"README.md": "# x\n"},
+        metadata={
+            "required_facts": [
+                {"artifact": {"path": "src/x/a.py"}},
+            ],
+        },
+        changed_paths=("src/y/b.py",),
+        options={"field": "required_facts[*].artifact.path"},
+        expects=(),
+    ),
 ]
 
 
@@ -99,8 +126,8 @@ def check(ir: SpecIR, config: dict[str, Any]) -> list[Finding]:
         return []
 
     field = config.get("field", "references")
-    references = ir.metadata.get(field)
-    if not isinstance(references, list) or not references:
+    string_refs = extract_strings(ir.metadata, field)
+    if not string_refs:
         return []
 
     status_field = config.get("status_field", "status")
@@ -118,7 +145,6 @@ def check(ir: SpecIR, config: dict[str, Any]) -> list[Finding]:
     if spec_touched:
         return []
 
-    string_refs = [g for g in references if isinstance(g, str)]
     matched = sorted(
         p for p in ir.changed_paths
         if any(_glob_match(g, p) for g in string_refs)

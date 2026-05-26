@@ -7,16 +7,23 @@ from ...ir.types import SpecIR
 from ..registry import rule
 from ..types import ExpectedFinding, Finding, Fixture
 
-_DEFAULT_WORDS = (
-    "fast",
+# High-signal weasels: almost always pure marketing copy in a spec.
+_DEFAULT_WARN_WORDS = (
     "scalable",
     "robust",
     "user-friendly",
-    "simply",
-    "just",
-    "easy",
     "intuitive",
     "performant",
+)
+
+# Low-signal weasels: real false-positive rate (e.g. "Fast Refresh",
+# "the contract is just the YAML", "easy mode"). Flagged at `info` so
+# they surface without gating the build.
+_DEFAULT_INFO_WORDS = (
+    "fast",
+    "just",
+    "simply",
+    "easy",
     "modern",
 )
 
@@ -34,14 +41,24 @@ _FIXTURES = [
         expects=(),
     ),
     Fixture(
-        name="weasel-words-fire-multiple",
+        name="warn-tier-words-fire-as-warn",
         files={
-            "README.md":"# X\n\nThe API is fast, scalable, and robust.\n",
+            "README.md":"# X\n\nThe API is scalable and robust.\n",
         },
         expects=(
-            ExpectedFinding(line=3, message_contains="fast"),
-            ExpectedFinding(line=3, message_contains="scalable"),
-            ExpectedFinding(line=3, message_contains="robust"),
+            ExpectedFinding(line=3, severity="warn", message_contains="scalable"),
+            ExpectedFinding(line=3, severity="warn", message_contains="robust"),
+        ),
+    ),
+    Fixture(
+        name="info-tier-words-fire-as-info",
+        files={
+            "README.md":"# X\n\nThe API is fast and easy to just use.\n",
+        },
+        expects=(
+            ExpectedFinding(line=3, severity="info", message_contains="fast"),
+            ExpectedFinding(line=3, severity="info", message_contains="easy"),
+            ExpectedFinding(line=3, severity="info", message_contains="just"),
         ),
     ),
     Fixture(
@@ -50,8 +67,8 @@ _FIXTURES = [
             "README.md":"# X\n\nThis is FAST and Robust.\n",
         },
         expects=(
-            ExpectedFinding(message_contains="FAST"),
-            ExpectedFinding(message_contains="Robust"),
+            ExpectedFinding(severity="info", message_contains="FAST"),
+            ExpectedFinding(severity="warn", message_contains="Robust"),
         ),
     ),
 ]
@@ -59,32 +76,50 @@ _FIXTURES = [
 
 @rule(
     id="no-weasel-words",
-    version="1.0.0",
+    version="2.0.0",
     tier="static",
     default_severity="warn",
     rationale=(
-        "Subjective adjectives like 'fast' or 'scalable' are not testable. "
-        "Replace with concrete thresholds or metrics."
+        "Subjective adjectives like 'scalable' or 'robust' are not testable. "
+        "Replace with concrete thresholds or metrics. Lower-signal words "
+        "(fast/just/simply/easy/modern) fire at `info` because they have a "
+        "real false-positive rate in code-adjacent prose."
     ),
     fixtures=_FIXTURES,
 )
 def check(ir: SpecIR, config: dict[str, Any]) -> list[Finding]:
-    words = config.get("words", _DEFAULT_WORDS)
-    severity = config.get("severity", "warn")
-    regex = re.compile(r"\b(" + "|".join(re.escape(w) for w in words) + r")\b", re.IGNORECASE)
+    warn_words = config.get("words", _DEFAULT_WARN_WORDS)
+    info_words = config.get("info_words", _DEFAULT_INFO_WORDS)
+    # A user-set `severity` applies only to the warn tier; info-tier words
+    # stay at info unless explicitly overridden via `info_severity`.
+    warn_severity = config.get("severity", "warn")
+    info_severity = config.get("info_severity", "info")
+
+    tiers: list[tuple[tuple[str, ...], str]] = []
+    if warn_words:
+        tiers.append((tuple(warn_words), warn_severity))
+    if info_words:
+        tiers.append((tuple(info_words), info_severity))
 
     findings: list[Finding] = []
-    for file, text in ir.raw_text.items():
-        for i, line in enumerate(text.splitlines(), start=1):
-            for m in regex.finditer(line):
-                findings.append(
-                    Finding(
-                        rule_id="no-weasel-words",
-                        severity=severity,
-                        file=file,
-                        line=i,
-                        message=f"Weasel word: '{m.group(0)}'",
-                        hint="Replace with a measurable threshold or metric.",
+    for words, severity in tiers:
+        if not words:
+            continue
+        regex = re.compile(
+            r"\b(" + "|".join(re.escape(w) for w in words) + r")\b",
+            re.IGNORECASE,
+        )
+        for file, text in ir.raw_text.items():
+            for i, line in enumerate(text.splitlines(), start=1):
+                for m in regex.finditer(line):
+                    findings.append(
+                        Finding(
+                            rule_id="no-weasel-words",
+                            severity=severity,
+                            file=file,
+                            line=i,
+                            message=f"Weasel word: '{m.group(0)}'",
+                            hint="Replace with a measurable threshold or metric.",
+                        )
                     )
-                )
     return findings

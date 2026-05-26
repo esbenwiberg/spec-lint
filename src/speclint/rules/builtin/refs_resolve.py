@@ -15,6 +15,7 @@ from typing import Any
 from ...ir.types import SpecIR
 from ..registry import rule
 from ..types import ExpectedFinding, Finding, Fixture
+from ._metadata import extract_strings
 
 
 _FIXTURES = [
@@ -65,6 +66,41 @@ _FIXTURES = [
             ExpectedFinding(message_contains="lib/nope/**"),
         ),
     ),
+    Fixture(
+        name="nested-field-path-flat-list",
+        files={"README.md": "# x\n"},
+        metadata={
+            "required_facts": [
+                {"artifact": {"path": "src/here/a.py"}},
+                {"artifact": {"path": "src/gone/b.py"}},
+            ],
+        },
+        repo_files={"src/here/a.py": "x = 1\n"},
+        options={"field": "required_facts[*].artifact.path"},
+        expects=(
+            ExpectedFinding(message_contains="src/gone/b.py"),
+        ),
+    ),
+    Fixture(
+        name="nested-field-all-resolve-no-findings",
+        files={"README.md": "# x\n"},
+        metadata={
+            "required_facts": [
+                {"artifact": {"path": "src/a.py"}},
+                {"artifact": {"path": "src/b.py"}},
+            ],
+        },
+        repo_files={"src/a.py": "x = 1\n", "src/b.py": "y = 2\n"},
+        options={"field": "required_facts[*].artifact.path"},
+        expects=(),
+    ),
+    Fixture(
+        name="nested-field-missing-no-findings",
+        files={"README.md": "# x\n"},
+        metadata={"title": "no required_facts here"},
+        options={"field": "required_facts[*].artifact.path"},
+        expects=(),
+    ),
 ]
 
 
@@ -82,8 +118,8 @@ _FIXTURES = [
 )
 def check(ir: SpecIR, config: dict[str, Any]) -> list[Finding]:
     field = config.get("field", "references")
-    references = ir.metadata.get(field)
-    if not isinstance(references, list) or not references:
+    references = extract_strings(ir.metadata, field)
+    if not references:
         return []
     if ir.repo_root is None:
         return []
@@ -92,8 +128,6 @@ def check(ir: SpecIR, config: dict[str, Any]) -> list[Finding]:
     sidecar_name = config.get("sidecar_filename", _guess_sidecar(ir))
     findings: list[Finding] = []
     for glob in references:
-        if not isinstance(glob, str):
-            continue
         if not _glob_has_match(ir.repo_root, glob):
             findings.append(
                 Finding(

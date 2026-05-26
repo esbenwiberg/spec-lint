@@ -1,3 +1,4 @@
+from .call import LLMCall, make_caller
 from .transport import (
     DEFAULT_MODELS,
     Transport,
@@ -9,9 +10,11 @@ from .transport import (
 
 __all__ = [
     "DEFAULT_MODELS",
+    "LLMCall",
     "Transport",
     "TransportNotAvailable",
     "TransportProbe",
+    "make_caller",
     "probe_transports",
     "select_transport",
 ]

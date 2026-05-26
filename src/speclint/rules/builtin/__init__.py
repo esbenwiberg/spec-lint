@@ -13,7 +13,9 @@ def register() -> dict:
         heading_redundancy,
         no_tbd,
         no_weasel_words,
+        no_weasel_words_llm,
         refs_coupling,
+        refs_infer_coupling,
         refs_resolve,
     )
 
@@ -22,6 +24,8 @@ def register() -> dict:
         heading_redundancy,
         no_tbd,
         no_weasel_words,
+        no_weasel_words_llm,
         refs_coupling,
+        refs_infer_coupling,
         refs_resolve,
     )

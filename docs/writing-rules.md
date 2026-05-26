@@ -247,10 +247,14 @@ collections when you'd otherwise re-implement the markdown parse.
 - **`semantic`** — needs embeddings (`fastembed`). speclint drops
   the rule with a one-line note if the dep isn't installed; your
   `check` must short-circuit when `ir.embedder is None`.
-- **`llm`** — calls a model. Opt-in per project. Your `check`
-  receives whatever transport the runner resolved (Anthropic API,
-  OpenAI API, `claude` CLI, `codex` CLI). No default LLM rules ship
-  in v1 — this tier exists for plugins.
+- **`llm`** — calls a model. The runner resolves a transport
+  (Anthropic API, OpenAI API, `claude` CLI, `codex` CLI) and binds a
+  caller into your rule's config as `config["_llm_call"]`. Call it
+  with a prompt string, get text back; cost and caching are handled
+  for you. **Always short-circuit** when `_llm_call is None` — the
+  runner normally drops your rule in that case, but the defensive
+  check keeps fixture tests trivial. The built-in
+  `no-weasel-words-llm` is a clean reference implementation.
 
 Pick `static` unless you genuinely need fuzzy matching or generative
 judgment.
@@ -264,13 +268,20 @@ acceptance criteria — read from `ir.metadata` and **silently no-op
 when the field is missing**:
 
 ```python
+from speclint.rules.builtin._metadata import extract_strings
+
 def check(ir, config):
     field = config.get("field", "references")
-    refs = ir.metadata.get(field)
-    if not isinstance(refs, list) or not refs:
-        return []                          # no metadata, no findings
+    refs = extract_strings(ir.metadata, field)   # flat list of strings
+    if not refs:
+        return []                                # no metadata, no findings
     # … do work
 ```
+
+`extract_strings` accepts a dotted path with `[*]` for list expansion,
+so a single config can target either a flat shape (`references`) or a
+nested one (`required_facts[*].artifact.path`). Out-of-shape metadata
+returns `[]`, never raises.
 
 Why silent? Because metadata is opt-in. A user who hasn't set
 `metadata.sidecar:` in `.speclint.yml` shouldn't get warnings about

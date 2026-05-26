@@ -114,6 +114,38 @@ references:                   # used by refs-resolve / refs-coupling
 owner: payments-team          # ignored by core; available to plugins
 ```
 
+### Reading nested fields
+
+If your sidecar already has reference paths buried in a nested
+structure — common for SDD-style contract docs — you don't have to
+flatten them. Point `refs-resolve` / `refs-coupling` at a dotted path
+with `[*]` for list expansion:
+
+```yaml
+# .speclint.yml
+metadata:
+  sidecar: contract.yaml
+rules:
+  refs-resolve:
+    field: required_facts[*].artifact.path
+  refs-coupling:
+    field: required_facts[*].artifact.path
+```
+
+Against a contract like:
+
+```yaml
+# specs/foo/contract.yaml
+required_facts:
+  - id: schema-test
+    artifact:
+      path: packages/shared/src/schemas/foo.test.ts
+      change: update
+```
+
+…the rules read `["packages/shared/src/schemas/foo.test.ts"]` and lint
+exactly as if you'd written a flat `references:` list.
+
 When the sidecar is absent, metadata-driven rules silently no-op for
 that spec. Everything else (TBD/weasel/heading-redundancy/…) keeps
 working on the markdown alone.
@@ -123,15 +155,20 @@ working on the markdown alone.
 | Rule | Tier | Default | Fires when |
 |---|---|---|---|
 | `no-tbd` | static | warn | A `TBD` / `TODO` / `FIXME` / `???` marker is left in spec text. Skipped when sidecar declares `status: draft`. |
-| `no-weasel-words` | static | warn | Vague qualifiers (`fast`, `robust`, `scalable`, `user-friendly`, …) appear in prose. |
-| `refs-resolve` | static | warn | A `references` glob in the sidecar matches zero files in the repo. Opt-in via metadata. |
-| `refs-coupling` | static | warn | The diff touches files under `references` but the spec folder itself isn't updated (Path B). Opt-in via metadata. |
+| `no-weasel-words` | static | warn / info | Vague qualifiers split by signal: high-signal (`scalable`, `robust`, `user-friendly`, `intuitive`, `performant`) fire as `warn`; low-signal (`fast`, `just`, `simply`, `easy`, `modern`) fire as `info` because they have a real false-positive rate in code-adjacent prose. |
+| `refs-resolve` | static | warn | A reference glob in the sidecar matches zero files in the repo. Opt-in via metadata. Field path supports nesting (e.g. `required_facts[*].artifact.path`). |
+| `refs-coupling` | static | warn | The diff touches files under the sidecar's reference list but the spec folder itself isn't updated (Path B). Opt-in via metadata. Same nested-field syntax as `refs-resolve`. |
+| `refs-infer-coupling` | static | info | Path B without a sidecar. Scans the spec's prose for path-shaped tokens, filters to paths that actually exist in the repo, and fires when any of those files change while the spec folder is untouched. Noisier than `refs-coupling`; defaults to `info`. |
 | `heading-redundancy` | semantic | info | Two headings in the same file have near-identical embeddings (likely duplicate sections). |
 | `claim-redundancy` | semantic | info | Two MUST/SHALL claims in the same file have near-identical embeddings (likely duplicate requirement). |
+| `no-weasel-words-llm` | llm | warn | Second-pass classifier: promotes the `info`-tier weasel hits to `warn` when a small model confirms they're real unmeasurable claims (not benign context like product names or code identifiers). Skipped silently when no transport is available. |
 
-`refs-coupling` is **Path B** — it's only meaningful with a diff
-context. Pass `--base origin/main` (or `--changed-files-from file.txt`)
-to enable it. The GitHub Action does this automatically.
+`refs-coupling` and `refs-infer-coupling` are **Path B** — they're only
+meaningful with a diff context. Pass `--base origin/main` (or
+`--changed-files-from file.txt`) to enable them. The GitHub Action does
+this automatically. Use `refs-coupling` when you have a metadata sidecar
+declaring covered paths; `refs-infer-coupling` works without one by
+mining prose mentions (lossier, hence `info` by default).
 
 ## Configuration
 
@@ -372,10 +409,12 @@ Two complementary modes:
 
 ## Status
 
-v0.1.0 — platform is feature-complete. Six rules ship; the
-infrastructure for adding more is small and well-tested (166 tests).
-Tier 3 is wired but ships zero default LLM rules by design — teams opt
-in via plugins.
+v0.3.0 — eight rules ship across all three tiers, including the first
+default LLM-tier rule (`no-weasel-words-llm`) and a sidecar-free Path B
+rule (`refs-infer-coupling`) that mines spec prose for file mentions.
+Path B coupling reads nested sidecar fields, so contract-style schemas
+work out of the box. 189 tests cover rule behavior, runner branches,
+fixture-based plugin overrides, and transport selection.
 
 ## License
 

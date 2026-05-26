@@ -111,10 +111,22 @@ def test_explicit_transport_failure_degrades_gracefully(tmp_path, monkeypatch):
     assert result.transport_chosen is None
 
 
+def _static_rule(rule_id: str = "static-noop") -> Rule:
+    return Rule(
+        id=rule_id, version="1.0.0", tier="static",
+        default_severity="warn", rationale="test only",
+        check=lambda ir, c: [], package="default",
+    )
+
+
 def test_no_llm_rules_means_transport_never_resolved(tmp_path, monkeypatch):
     """When the registry has zero LLM-tier rules, the runner must not even
     attempt transport resolution — saves a subprocess + env probe."""
     _seed_repo(tmp_path)
+    # Patch to a static-only registry so the default package's LLM rule
+    # doesn't trigger transport resolution.
+    _patch_registry(monkeypatch, _static_rule())
+
     calls: list[str] = []
 
     def tracker(pref):
@@ -122,7 +134,7 @@ def test_no_llm_rules_means_transport_never_resolved(tmp_path, monkeypatch):
         return "api"
 
     monkeypatch.setattr("speclint.runner.select_transport", tracker)
-    result = run(tmp_path, Config())  # default registry, no LLM rules
+    result = run(tmp_path, Config())
     assert calls == []
     assert result.transport_chosen is None
 

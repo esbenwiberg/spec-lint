@@ -5,6 +5,7 @@ __pycache__/
 .venv/
 .pytest_cache/
 .speclint-cache/
+.claude/
 dist/
 build/
 .coverage

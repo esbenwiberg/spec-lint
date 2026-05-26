@@ -8,7 +8,7 @@ from .config import Config
 from .discovery import discover_specs
 from .ir import build_spec_ir
 from .ir.types import SpecIR
-from .llm import TransportNotAvailable, select_transport
+from .llm import LLMCall, TransportNotAvailable, make_caller, select_transport
 from .rules import Finding
 from .rules.registry import RuleRegistry, load_rule_packages
 from .rules.types import SEVERITY_RANK
@@ -57,6 +57,7 @@ def run(repo_root: Path, config: Config,
 
     # LLM transport resolution — only relevant if any loaded rule has tier=llm.
     llm_rules = [r for r in registry.all() if r.tier == "llm"]
+    llm_call: LLMCall | None = None
     if llm_rules and config.llm.enabled:
         try:
             chosen = select_transport(config.llm.transport)
@@ -70,6 +71,12 @@ def run(repo_root: Path, config: Config,
         if chosen is None:
             result.rules_skipped_llm = [r.id for r in llm_rules]
             registry = _drop_llm_rules(registry)
+        else:
+            llm_call = make_caller(
+                chosen,
+                model=config.llm.model,
+                cache_dir=repo_root / config.llm.cache,
+            )
     elif llm_rules and not config.llm.enabled:
         result.rules_skipped_llm = [r.id for r in llm_rules]
         registry = _drop_llm_rules(registry)
@@ -94,18 +101,26 @@ def run(repo_root: Path, config: Config,
             metadata_sidecar=config.metadata.sidecar,
         )
         result.specs_checked.append(candidate.name)
-        result.findings.extend(_run_rules_on_ir(ir, registry, config))
+        result.findings.extend(_run_rules_on_ir(ir, registry, config, llm_call))
 
     result.rules_evaluated = len(registry.rules)
     return result
 
 
-def _run_rules_on_ir(ir: SpecIR, registry: RuleRegistry, config: Config) -> list[Finding]:
+def _run_rules_on_ir(
+    ir: SpecIR,
+    registry: RuleRegistry,
+    config: Config,
+    llm_call: LLMCall | None,
+) -> list[Finding]:
     findings: list[Finding] = []
     for r in registry.all():
         opts = config.rule_options(r.id)
         if opts.get("severity") == "off":
             continue
+        if r.tier == "llm" and llm_call is not None:
+            # Underscored to avoid collision with user-supplied options.
+            opts = {**opts, "_llm_call": llm_call}
         try:
             for f in r.check(ir, opts):
                 # Stamp spec name + apply config severity override

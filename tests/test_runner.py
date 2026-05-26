@@ -45,8 +45,11 @@ def test_exit_code_fail_on_warn():
     assert exit_code_for(result, "never") == 0
 
 
-def test_run_reports_no_skipped_llm_when_no_llm_rules():
+def test_run_skips_llm_rule_when_no_transport_available(monkeypatch):
+    """The default package ships `no-weasel-words-llm`. Without a transport
+    on the test runner, it must be skipped (not crash) and reported."""
+    monkeypatch.setattr("speclint.runner.select_transport", lambda _: None)
     cfg = Config()
     result = run(REPO, cfg)
-    assert result.rules_skipped_llm == []
+    assert result.rules_skipped_llm == ["no-weasel-words-llm"]
     assert result.transport_chosen is None

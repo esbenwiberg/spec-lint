@@ -33,7 +33,16 @@ metadata:
 #   no-tbd: error                       # bump severity
 #   no-weasel-words: off                # disable
 #   refs-resolve:
-#     field: owns                       # rename the metadata key the rule reads
+#     # `field` reads list-of-strings from metadata. Use a dotted path
+#     # with [*] to walk nested shapes — e.g. autopod-style contracts:
+#     field: required_facts[*].artifact.path
+#   refs-coupling:
+#     field: required_facts[*].artifact.path
+#   refs-infer-coupling:
+#     severity: warn                    # bump from info if prose mentions
+#                                       # are reliable enough on your specs
+#   no-weasel-words-llm:
+#     severity: warn                    # confirmed claims promoted to warn
 #   heading-redundancy:
 #     severity: warn
 #     threshold: 0.92                   # Tier 2 similarity threshold
@@ -43,10 +52,13 @@ rules: {}
 # warn fails on any warning; never always exits 0.
 fail_on: error
 
-# Tier 3 LLM rules. None ship by default — this section only matters
-# once a plugin registers LLM-tier rules.
+# Tier 3 LLM rules. `no-weasel-words-llm` ships in the default package —
+# it's a second-pass classifier that promotes low-signal weasel hits
+# (fast/just/simply/easy/modern) from `info` to `warn` when a small
+# model confirms they're real unmeasurable claims. Skipped silently
+# unless a transport is available.
 llm:
   enabled: true
   transport: auto       # auto | api | openai | cli | codex
-  model: null           # null = each transport's default
+  model: null           # null = each transport's default (Haiku for api/cli)
   cache: .speclint-cache/llm/
