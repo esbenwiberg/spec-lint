@@ -1,28 +1,34 @@
 """Fixture harness for rule tests.
 
-Each rule ships a list of Fixture instances. `run_fixture` materializes a
-fixture into a tmp directory, builds the SpecIR, runs the rule, and returns
-the findings — ready for the caller to assert against `fixture.expects`.
+Each rule ships a list of Fixture instances. ``run_fixture`` materializes
+a fixture into a tmp directory, builds the SpecIR, runs the rule, and
+returns the findings — ready for the caller to assert against
+``fixture.expects``.
 
-Mirrors repofit's pattern (packages/engine/src/fixtures/runner.ts).
+If a fixture declares ``metadata``, the harness writes it to a sidecar
+YAML file (default ``contract.yaml``) inside the spec folder and tells
+the IR builder to load it. That exercises the same code path the
+runner uses in production, with no schema imposed on the fixture.
 """
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
 
+import yaml
+
+from .discovery import SpecCandidate
 from .ir import build_spec_ir
 from .rules.types import ExpectedFinding, Finding, Fixture, Rule
 from .semantic import BagOfTokensEmbedder
 
 
 def materialize(fixture: Fixture, tmp_path: Path) -> tuple[Path, Path]:
-    """Write fixture into tmp_path. Returns `(spec_folder, repo_root)`.
+    """Write fixture into tmp_path. Returns ``(spec_folder, repo_root)``.
 
-    Layout: `tmp_path` is the repo root, the spec lives at `tmp_path/spec/`.
-    Spec files (fixture.files) go under the spec folder; repo_files go at
-    repo root. This is uniform whether or not the fixture uses Path B
-    context — keeps the harness simple.
+    Layout: ``tmp_path`` is the repo root, the spec lives at
+    ``tmp_path/spec/``. Spec files (``fixture.files``) go under the spec
+    folder; ``repo_files`` go at repo root.
     """
     repo_root = tmp_path
     spec_folder = tmp_path / "spec"
@@ -38,6 +44,11 @@ def materialize(fixture: Fixture, tmp_path: Path) -> tuple[Path, Path]:
         full.parent.mkdir(parents=True, exist_ok=True)
         full.write_text(content, encoding="utf-8")
 
+    if fixture.metadata:
+        (spec_folder / fixture.sidecar_filename).write_text(
+            yaml.safe_dump(fixture.metadata), encoding="utf-8"
+        )
+
     return spec_folder, repo_root
 
 
@@ -50,11 +61,21 @@ def run_fixture(rule: Rule, fixture: Fixture, tmp_path: Path,
     real FastembedEmbedder via the runner."""
     spec_folder, repo_root = materialize(fixture, tmp_path)
     embedder = BagOfTokensEmbedder() if rule.tier == "semantic" else None
+
+    md_files = tuple(sorted(p for p in spec_folder.iterdir() if p.suffix == ".md"))
+    candidate = SpecCandidate(
+        name=spec_folder.name,
+        folder=spec_folder,
+        md_files=md_files,
+        is_single_file=False,
+    )
+
     ir = build_spec_ir(
-        spec_folder,
+        candidate,
         repo_root=repo_root,
         changed_paths=fixture.changed_paths,
         embedder=embedder,
+        metadata_sidecar=fixture.sidecar_filename if fixture.metadata else None,
     )
     opts: dict[str, Any] = dict(fixture.options)
     if config_overrides:

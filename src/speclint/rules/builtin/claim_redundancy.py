@@ -22,8 +22,7 @@ _FIXTURES = [
     Fixture(
         name="distinct-claims-pass",
         files={
-            "spec.yml": "id: x\nstatus: accepted\n",
-            "README.md": (
+            "README.md":(
                 "# Spec\n"
                 "- The system MUST authenticate users on login.\n"
                 "- Errors SHOULD be reported to the ops channel.\n"
@@ -35,8 +34,7 @@ _FIXTURES = [
     Fixture(
         name="duplicate-claims-fire",
         files={
-            "spec.yml": "id: x\nstatus: accepted\n",
-            "README.md": (
+            "README.md":(
                 "# Spec\n"
                 "- The system MUST rate-limit API requests.\n"
                 "- Audit logs SHOULD be retained for 90 days.\n"
@@ -54,7 +52,6 @@ _FIXTURES = [
     Fixture(
         name="cross-file-not-flagged",
         files={
-            "spec.yml": "id: x\nstatus: accepted\n",
             "overview.md": (
                 "# Overview\n"
                 "- The system MUST rate-limit API requests.\n"
@@ -70,24 +67,38 @@ _FIXTURES = [
     Fixture(
         name="single-claim-no-pairs",
         files={
-            "spec.yml": "id: x\nstatus: accepted\n",
-            "README.md": "# Spec\n- The system MUST log audit events.\n",
+            "README.md":"# Spec\n- The system MUST log audit events.\n",
         },
         expects=(),
     ),
     Fixture(
         name="no-claims-no-findings",
         files={
-            "spec.yml": "id: x\nstatus: accepted\n",
-            "README.md": "# Spec\nNo requirements here, just prose.\n",
+            "README.md":"# Spec\nNo requirements here, just prose.\n",
         },
         expects=(),
     ),
     Fixture(
+        name="gherkin-duplicate-steps-fire",
+        files={
+            "README.md":(
+                "# Feature\n"
+                "Scenario: rate limiting\n"
+                "  Given the system must rate-limit API requests under heavy load\n"
+                "  When traffic exceeds the configured threshold\n"
+                "  Then the system must rate-limit API requests under heavy load\n"
+            ),
+        },
+        # The Given and Then steps share every body token; only the
+        # leading keyword differs, so cosine ≈ 0.92 > the 0.85 threshold.
+        expects=(
+            ExpectedFinding(message_contains="rate-limit API requests"),
+        ),
+    ),
+    Fixture(
         name="custom-threshold-can-loosen",
         files={
-            "spec.yml": "id: x\nstatus: accepted\n",
-            "README.md": (
+            "README.md":(
                 "# Spec\n"
                 "- The system MUST rate-limit API requests.\n"
                 "- The system MUST limit API rate requests.\n"

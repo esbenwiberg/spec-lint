@@ -12,27 +12,18 @@ _DEFAULT_PATTERNS = (r"TBD", r"TODO", r"FIXME", r"\?\?\?")
 
 _FIXTURES = [
     Fixture(
-        name="clean-accepted-spec",
-        files={
-            "spec.yml": "id: x\nstatus: accepted\n",
-            "README.md": "# X\n\nThe API SHALL respond with 200 within 100ms.\n",
-        },
-        expects=(),  # zero findings expected
+        name="clean-spec-no-markers",
+        files={"README.md": "# X\n\nThe API SHALL respond with 200 within 100ms.\n"},
+        expects=(),
     ),
     Fixture(
-        name="tbd-fires-on-accepted",
-        files={
-            "spec.yml": "id: x\nstatus: accepted\n",
-            "README.md": "# X\n\nWe will figure caching out. TBD.\n",
-        },
+        name="tbd-fires",
+        files={"README.md": "# X\n\nWe will figure caching out. TBD.\n"},
         expects=(ExpectedFinding(line=3, message_contains="TBD"),),
     ),
     Fixture(
         name="multiple-markers-fire-separately",
-        files={
-            "spec.yml": "id: x\nstatus: accepted\n",
-            "README.md": "TBD\nTODO\nFIXME\n",
-        },
+        files={"README.md": "TBD\nTODO\nFIXME\n"},
         expects=(
             ExpectedFinding(line=1, message_contains="TBD"),
             ExpectedFinding(line=2, message_contains="TODO"),
@@ -40,12 +31,24 @@ _FIXTURES = [
         ),
     ),
     Fixture(
+        name="lowercase-markers-also-fire",
+        files={"README.md": "tbd in a sentence\nfixme: this too\n"},
+        expects=(
+            ExpectedFinding(line=1, message_contains="tbd"),
+            ExpectedFinding(line=2, message_contains="fixme"),
+        ),
+    ),
+    Fixture(
         name="draft-status-skips-rule",
-        files={
-            "spec.yml": "id: x\nstatus: draft\n",
-            "README.md": "Lots of TBD and FIXME here, all allowed in draft.\n",
-        },
-        expects=(),  # draft spec → rule short-circuits
+        files={"README.md": "Lots of TBD and FIXME here, all allowed in draft.\n"},
+        metadata={"status": "draft"},
+        expects=(),
+    ),
+    Fixture(
+        name="non-draft-status-still-fires",
+        files={"README.md": "TBD in an accepted spec\n"},
+        metadata={"status": "accepted"},
+        expects=(ExpectedFinding(line=1, message_contains="TBD"),),
     ),
 ]
 
@@ -56,17 +59,20 @@ _FIXTURES = [
     tier="static",
     default_severity="warn",
     rationale=(
-        "Specs above status=draft should not contain unresolved markers. "
-        "Move open questions into a dedicated file or resolve them."
+        "Specs that aren't drafts should not contain unresolved markers. "
+        "Move open questions into a dedicated file or resolve them. "
+        "Skipped when the spec's metadata declares status=draft (key is "
+        "configurable via the `status_field` option)."
     ),
     fixtures=_FIXTURES,
 )
 def check(ir: SpecIR, config: dict[str, Any]) -> list[Finding]:
-    if ir.manifest and ir.manifest.is_draft:
+    status_field = config.get("status_field", "status")
+    if ir.metadata.get(status_field) == "draft":
         return []
 
     patterns = config.get("patterns", _DEFAULT_PATTERNS)
-    regex = re.compile(r"\b(" + "|".join(patterns) + r")\b")
+    regex = re.compile(r"\b(" + "|".join(patterns) + r")\b", re.IGNORECASE)
     severity = config.get("severity", "warn")
 
     findings: list[Finding] = []

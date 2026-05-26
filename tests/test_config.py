@@ -5,7 +5,8 @@ import textwrap
 
 import pytest
 
-from speclint.config import LLMConfig, RuleConfig, load_config
+from speclint.config import LLMConfig, MetadataConfig, RuleConfig, load_config
+from speclint.discovery import DEFAULT_ROOTS
 from speclint.rules.registry import SpecLintError
 
 
@@ -16,12 +17,14 @@ def _write(tmp_path, content: str):
 def test_no_config_returns_defaults(tmp_path):
     cfg = load_config(tmp_path)
     assert cfg.packages == ["default"]
-    assert cfg.specs == ["specs/*/"]
-    assert cfg.include == ["**/*.md"]
+    assert cfg.roots == list(DEFAULT_ROOTS)
+    assert cfg.extra_roots == []
     assert cfg.ignore == []
     assert cfg.fail_on == "error"
     assert cfg.rules == {}
     assert isinstance(cfg.llm, LLMConfig)
+    assert isinstance(cfg.metadata, MetadataConfig)
+    assert cfg.metadata.sidecar is None
 
 
 def test_empty_yaml_returns_defaults(tmp_path):
@@ -33,17 +36,50 @@ def test_empty_yaml_returns_defaults(tmp_path):
 def test_full_top_level_fields(tmp_path):
     _write(tmp_path, """
     packages: [default, my-team]
-    specs: ["docs/specs/*/"]
-    include: ["**/*.md", "**/*.mdx"]
+    roots: ["docs/specs", "specs"]
+    extra_roots: ["adrs"]
     ignore: ["**/draft/*"]
     fail_on: warn
     """)
     cfg = load_config(tmp_path)
     assert cfg.packages == ["default", "my-team"]
-    assert cfg.specs == ["docs/specs/*/"]
-    assert cfg.include == ["**/*.md", "**/*.mdx"]
+    assert cfg.roots == ["docs/specs", "specs"]
+    assert cfg.extra_roots == ["adrs"]
     assert cfg.ignore == ["**/draft/*"]
     assert cfg.fail_on == "warn"
+
+
+def test_metadata_sidecar_parsed(tmp_path):
+    _write(tmp_path, """
+    metadata:
+      sidecar: contract.yaml
+    """)
+    cfg = load_config(tmp_path)
+    assert cfg.metadata.sidecar == "contract.yaml"
+
+
+def test_metadata_block_with_explicit_null_sidecar(tmp_path):
+    _write(tmp_path, """
+    metadata:
+      sidecar: null
+    """)
+    cfg = load_config(tmp_path)
+    assert cfg.metadata.sidecar is None
+
+
+def test_metadata_not_mapping_raises(tmp_path):
+    _write(tmp_path, "metadata: contract.yaml\n")
+    with pytest.raises(SpecLintError, match="`metadata` must be a mapping"):
+        load_config(tmp_path)
+
+
+def test_metadata_sidecar_wrong_type_raises(tmp_path):
+    _write(tmp_path, """
+    metadata:
+      sidecar: 42
+    """)
+    with pytest.raises(SpecLintError, match="`metadata.sidecar` must be a string"):
+        load_config(tmp_path)
 
 
 def test_rule_string_form_sets_severity(tmp_path):
@@ -141,9 +177,15 @@ def test_packages_not_list_of_strings_raises(tmp_path):
         load_config(tmp_path)
 
 
-def test_specs_wrong_type_raises(tmp_path):
-    _write(tmp_path, "specs: oops\n")
-    with pytest.raises(SpecLintError, match="`specs` must be a list of strings"):
+def test_roots_wrong_type_raises(tmp_path):
+    _write(tmp_path, "roots: oops\n")
+    with pytest.raises(SpecLintError, match="`roots` must be a list of strings"):
+        load_config(tmp_path)
+
+
+def test_extra_roots_wrong_type_raises(tmp_path):
+    _write(tmp_path, "extra_roots: [1, 2]\n")
+    with pytest.raises(SpecLintError, match="`extra_roots` must be a list of strings"):
         load_config(tmp_path)
 
 

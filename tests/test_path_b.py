@@ -7,30 +7,40 @@ reaches SpecIR.changed_paths and how the CLI surfaces it.
 from __future__ import annotations
 
 import subprocess
-import textwrap
 from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
 
 from speclint.cli import main
-from speclint.config import Config
+from speclint.config import Config, MetadataConfig
 from speclint.diff import from_file, from_git
 from speclint.rules.registry import SpecLintError
 from speclint.runner import run
 
 
-def _make_repo(tmp_path: Path, *, spec_yml: str, repo_files: dict[str, str]) -> Path:
-    """Lay down a single spec + extra repo files. Returns repo root."""
+def _make_repo(tmp_path: Path, *, sidecar_yaml: str, repo_files: dict[str, str]) -> Path:
+    """Lay down a single spec + extra repo files. Returns repo root.
+
+    The sidecar lands as `meta.yml` inside the spec folder; callers must
+    configure ``Config.metadata.sidecar = "meta.yml"`` for rules to see
+    its contents.
+    """
     spec = tmp_path / "specs" / "demo"
     spec.mkdir(parents=True)
-    (spec / "spec.yml").write_text(spec_yml, encoding="utf-8")
+    (spec / "meta.yml").write_text(sidecar_yaml, encoding="utf-8")
     (spec / "README.md").write_text("# demo\n", encoding="utf-8")
     for rel, content in repo_files.items():
         full = tmp_path / rel
         full.parent.mkdir(parents=True, exist_ok=True)
         full.write_text(content, encoding="utf-8")
     return tmp_path
+
+
+def _cfg_with_sidecar() -> Config:
+    cfg = Config()
+    cfg.metadata = MetadataConfig(sidecar="meta.yml")
+    return cfg
 
 
 # ---------- diff resolution ----------
@@ -88,11 +98,10 @@ def test_from_git_invalid_base_raises(tmp_path):
 def test_runner_threads_changed_paths_into_coupling_rule(tmp_path):
     root = _make_repo(
         tmp_path,
-        spec_yml="id: demo\nstatus: accepted\nreferences:\n  - 'src/demo/**'\n",
+        sidecar_yaml="status: accepted\nreferences:\n  - 'src/demo/**'\n",
         repo_files={"src/demo/a.py": "x = 1\n"},
     )
-    cfg = Config()
-    result = run(root, cfg, changed_paths=("src/demo/a.py",))
+    result = run(root, _cfg_with_sidecar(), changed_paths=("src/demo/a.py",))
 
     coupling = [f for f in result.findings if f.rule_id == "refs-coupling"]
     assert len(coupling) == 1
@@ -103,10 +112,10 @@ def test_runner_threads_changed_paths_into_coupling_rule(tmp_path):
 def test_runner_without_changed_paths_skips_coupling(tmp_path):
     root = _make_repo(
         tmp_path,
-        spec_yml="id: demo\nstatus: accepted\nreferences:\n  - 'src/demo/**'\n",
+        sidecar_yaml="status: accepted\nreferences:\n  - 'src/demo/**'\n",
         repo_files={"src/demo/a.py": "x = 1\n"},
     )
-    result = run(root, Config())
+    result = run(root, _cfg_with_sidecar())
     assert not [f for f in result.findings if f.rule_id == "refs-coupling"]
 
 
@@ -114,11 +123,11 @@ def test_runner_spec_co_change_silences_coupling(tmp_path):
     """When the spec folder itself was modified in the same diff, no fire."""
     root = _make_repo(
         tmp_path,
-        spec_yml="id: demo\nstatus: accepted\nreferences:\n  - 'src/demo/**'\n",
+        sidecar_yaml="status: accepted\nreferences:\n  - 'src/demo/**'\n",
         repo_files={"src/demo/a.py": "x = 1\n"},
     )
     changed = ("src/demo/a.py", "specs/demo/README.md")
-    result = run(root, Config(), changed_paths=changed)
+    result = run(root, _cfg_with_sidecar(), changed_paths=changed)
     assert not [f for f in result.findings if f.rule_id == "refs-coupling"]
 
 
@@ -135,8 +144,12 @@ def test_cli_rejects_both_base_and_changed_files_from(tmp_path):
 def test_cli_changed_files_from_triggers_coupling(tmp_path):
     root = _make_repo(
         tmp_path,
-        spec_yml="id: demo\nstatus: accepted\nreferences:\n  - 'src/demo/**'\n",
+        sidecar_yaml="status: accepted\nreferences:\n  - 'src/demo/**'\n",
         repo_files={"src/demo/a.py": "x = 1\n"},
+    )
+    # CLI needs a real `.speclint.yml` so the sidecar loader is on.
+    (root / ".speclint.yml").write_text(
+        "metadata:\n  sidecar: meta.yml\n", encoding="utf-8"
     )
     changed_file = root / "changed.txt"
     changed_file.write_text("src/demo/a.py\n")

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from ..semantic import Embedder
@@ -43,34 +43,34 @@ class Term:
     occurrences: tuple[tuple[str, int], ...]
 
 
-@dataclass(frozen=True)
-class Manifest:
-    id: str
-    status: str
-    owner: str | None = None
-    references: tuple[str, ...] = ()
-    related: tuple[str, ...] = ()
-    raw: dict | None = None
-
-    @property
-    def is_draft(self) -> bool:
-        return self.status == "draft"
-
-
 @dataclass
 class SpecIR:
+    """A single discovered spec's parsed view.
+
+    ``folder`` is always a directory (the parent dir for single-file specs).
+    ``files`` is the set of ``.md`` paths relative to ``folder`` that make
+    up this spec — for a single-file spec it's exactly one entry.
+
+    ``metadata`` is opt-in. It's empty unless ``.speclint.yml`` configures
+    a sidecar loader (e.g. ``metadata.sidecar: contract.yaml``). Rules
+    that need metadata read keys from this dict and silently skip when
+    they're absent — so the linter works on any spec layout out of the
+    box, and only opted-in rules require user configuration."""
+
+    name: str
     folder: Path
-    manifest: Manifest | None
-    manifest_errors: list[str] = field(default_factory=list)
+    is_single_file: bool = False
     files: list[str] = field(default_factory=list)
     headings: list[Heading] = field(default_factory=list)
     links: list[Link] = field(default_factory=list)
     claims: list[Claim] = field(default_factory=list)
     terms: list[Term] = field(default_factory=list)
     raw_text: dict[str, str] = field(default_factory=dict)
-    # Path B coupling context. `repo_root` lets rules resolve repo-relative
-    # globs from spec.yml. `changed_paths` is the set of repo-root-relative
-    # paths modified in the current run (e.g., from `git diff`); None means
+    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata_errors: list[str] = field(default_factory=list)
+    # Path B coupling context. ``repo_root`` lets rules resolve repo-relative
+    # globs from metadata. ``changed_paths`` is the set of repo-root-relative
+    # paths modified in the current run (e.g., from ``git diff``); None means
     # no diff context was provided — coupling rules MUST short-circuit.
     repo_root: Path | None = None
     changed_paths: tuple[str, ...] | None = None
@@ -79,14 +79,6 @@ class SpecIR:
     # if this is None — the runner will normally drop them before they ever
     # see the IR, but defensively guarding keeps unit-test paths safe.
     embedder: "Embedder | None" = None
-
-    @property
-    def name(self) -> str:
-        return self.folder.name
-
-    @property
-    def status(self) -> str:
-        return self.manifest.status if self.manifest else "unknown"
 
     @property
     def folder_relpath(self) -> str | None:

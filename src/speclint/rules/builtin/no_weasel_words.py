@@ -25,8 +25,7 @@ _FIXTURES = [
     Fixture(
         name="concrete-language-passes",
         files={
-            "spec.yml": "id: x\nstatus: accepted\n",
-            "README.md": (
+            "README.md":(
                 "# X\n\n"
                 "The API SHALL respond within 200ms p95. Requests exceeding 10MB "
                 "are rejected with HTTP 413.\n"
@@ -37,8 +36,7 @@ _FIXTURES = [
     Fixture(
         name="weasel-words-fire-multiple",
         files={
-            "spec.yml": "id: x\nstatus: accepted\n",
-            "README.md": "# X\n\nThe API is fast, scalable, and robust.\n",
+            "README.md":"# X\n\nThe API is fast, scalable, and robust.\n",
         },
         expects=(
             ExpectedFinding(line=3, message_contains="fast"),
@@ -49,8 +47,7 @@ _FIXTURES = [
     Fixture(
         name="case-insensitive-match",
         files={
-            "spec.yml": "id: x\nstatus: accepted\n",
-            "README.md": "# X\n\nThis is FAST and Robust.\n",
+            "README.md":"# X\n\nThis is FAST and Robust.\n",
         },
         expects=(
             ExpectedFinding(message_contains="FAST"),

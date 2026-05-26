@@ -23,8 +23,7 @@ _FIXTURES = [
     Fixture(
         name="distinct-headings-pass",
         files={
-            "spec.yml": "id: x\nstatus: accepted\n",
-            "README.md": (
+            "README.md":(
                 "# API\n"
                 "## Authentication\n"
                 "## Rate Limiting\n"
@@ -37,8 +36,7 @@ _FIXTURES = [
     Fixture(
         name="duplicate-headings-fire",
         files={
-            "spec.yml": "id: x\nstatus: accepted\n",
-            "README.md": (
+            "README.md":(
                 "# Service\n"
                 "## API Rate Limiting\n"
                 "## Pagination\n"
@@ -56,8 +54,7 @@ _FIXTURES = [
     Fixture(
         name="case-and-order-invariant",
         files={
-            "spec.yml": "id: x\nstatus: accepted\n",
-            "README.md": (
+            "README.md":(
                 "# Spec\n"
                 "## PAYMENT PROCESSING\n"
                 "## Logging\n"
@@ -71,24 +68,21 @@ _FIXTURES = [
     Fixture(
         name="single-heading-no-pairs",
         files={
-            "spec.yml": "id: x\nstatus: accepted\n",
-            "README.md": "# Only One\n",
+            "README.md":"# Only One\n",
         },
         expects=(),
     ),
     Fixture(
         name="no-headings-no-findings",
         files={
-            "spec.yml": "id: x\nstatus: accepted\n",
-            "README.md": "Just a paragraph, no headings.\n",
+            "README.md":"Just a paragraph, no headings.\n",
         },
         expects=(),
     ),
     Fixture(
         name="custom-threshold-can-loosen",
         files={
-            "spec.yml": "id: x\nstatus: accepted\n",
-            "README.md": (
+            "README.md":(
                 "# Spec\n"
                 "## API Rate Limiting\n"
                 "## API Rate Limiting Strategy\n"

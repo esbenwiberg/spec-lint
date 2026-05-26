@@ -6,6 +6,7 @@ from typing import Any
 
 import yaml
 
+from .discovery import DEFAULT_ROOTS
 from .rules.registry import SpecLintError
 
 
@@ -18,6 +19,19 @@ class LLMConfig:
 
 
 @dataclass
+class MetadataConfig:
+    """Optional sidecar-metadata loader. Off unless declared in .speclint.yml.
+
+    When set, each discovered spec is checked for a sidecar file named
+    ``sidecar`` in its folder (e.g. ``contract.yaml``). If present, the
+    file's YAML is parsed and exposed on ``SpecIR.metadata``. Rules that
+    need metadata read from this dict — they silently skip when keys are
+    absent, so the whole layer remains opt-in."""
+
+    sidecar: str | None = None     # e.g. "contract.yaml", "spec.yml", "meta.yml"
+
+
+@dataclass
 class RuleConfig:
     severity: str | None = None
     options: dict[str, Any] = field(default_factory=dict)
@@ -26,10 +40,11 @@ class RuleConfig:
 @dataclass
 class Config:
     packages: list[str] = field(default_factory=lambda: ["default"])
-    specs: list[str] = field(default_factory=lambda: ["specs/*/"])
-    include: list[str] = field(default_factory=lambda: ["**/*.md"])
+    roots: list[str] = field(default_factory=lambda: list(DEFAULT_ROOTS))
+    extra_roots: list[str] = field(default_factory=list)
     ignore: list[str] = field(default_factory=list)
     rules: dict[str, RuleConfig] = field(default_factory=dict)
+    metadata: MetadataConfig = field(default_factory=MetadataConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
     fail_on: str = "error"  # error | warn | never
 
@@ -59,10 +74,10 @@ def load_config(repo_root: Path) -> Config:
 
     if "packages" in raw:
         cfg.packages = _require_list_of_str(raw, "packages")
-    if "specs" in raw:
-        cfg.specs = _require_list_of_str(raw, "specs")
-    if "include" in raw:
-        cfg.include = _require_list_of_str(raw, "include")
+    if "roots" in raw:
+        cfg.roots = _require_list_of_str(raw, "roots")
+    if "extra_roots" in raw:
+        cfg.extra_roots = _require_list_of_str(raw, "extra_roots")
     if "ignore" in raw:
         cfg.ignore = _require_list_of_str(raw, "ignore")
     if "fail_on" in raw:
@@ -70,6 +85,15 @@ def load_config(repo_root: Path) -> Config:
         if val not in {"error", "warn", "never"}:
             raise SpecLintError(f".speclint.yml: fail_on must be one of error|warn|never, got {val!r}")
         cfg.fail_on = val
+
+    md_raw = raw.get("metadata", {})
+    if md_raw:
+        if not isinstance(md_raw, dict):
+            raise SpecLintError(".speclint.yml: `metadata` must be a mapping")
+        sidecar = md_raw.get("sidecar")
+        if sidecar is not None and not isinstance(sidecar, str):
+            raise SpecLintError(".speclint.yml: `metadata.sidecar` must be a string")
+        cfg.metadata = MetadataConfig(sidecar=sidecar)
 
     rules_raw = raw.get("rules", {})
     if rules_raw:

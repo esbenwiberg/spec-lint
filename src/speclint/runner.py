@@ -5,7 +5,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .config import Config
-from .ir import build_spec_ir, discover_spec_folders
+from .discovery import discover_specs
+from .ir import build_spec_ir
 from .ir.types import SpecIR
 from .llm import TransportNotAvailable, select_transport
 from .rules import Finding
@@ -78,17 +79,21 @@ def run(repo_root: Path, config: Config,
     # a skip log entry so the run doesn't crash.
     embedder = _resolve_embedder(registry, result)
 
-    folders = discover_spec_folders(repo_root, config.specs)
-    for folder in folders:
+    candidates = discover_specs(
+        repo_root,
+        roots=tuple(config.roots),
+        extra_roots=tuple(config.extra_roots),
+        ignore=tuple(config.ignore),
+    )
+    for candidate in candidates:
         ir = build_spec_ir(
-            folder,
-            include=config.include,
-            ignore=config.ignore,
+            candidate,
             repo_root=repo_root,
             changed_paths=changed_paths,
             embedder=embedder,
+            metadata_sidecar=config.metadata.sidecar,
         )
-        result.specs_checked.append(folder.name)
+        result.specs_checked.append(candidate.name)
         result.findings.extend(_run_rules_on_ir(ir, registry, config))
 
     result.rules_evaluated = len(registry.rules)

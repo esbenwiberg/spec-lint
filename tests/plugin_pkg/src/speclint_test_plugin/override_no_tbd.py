@@ -13,11 +13,14 @@ from speclint.rules.types import ExpectedFinding, Finding, Fixture
 _FIXTURES = [
     Fixture(
         name="xxx-fires-but-tbd-does-not",
-        files={
-            "spec.yml": "id: x\nstatus: accepted\n",
-            "README.md": "XXX hello TBD\n",
-        },
+        files={"README.md": "XXX hello TBD\n"},
         expects=(ExpectedFinding(message_contains="XXX"),),
+    ),
+    Fixture(
+        name="draft-status-skips",
+        files={"README.md": "XXX hello\n"},
+        metadata={"status": "draft"},
+        expects=(),
     ),
 ]
 
@@ -31,7 +34,7 @@ _FIXTURES = [
     fixtures=_FIXTURES,
 )
 def check(ir: SpecIR, config: dict[str, Any]) -> list[Finding]:
-    if ir.manifest and ir.manifest.is_draft:
+    if ir.metadata.get(config.get("status_field", "status")) == "draft":
         return []
     regex = re.compile(r"\bXXX\b")
     findings: list[Finding] = []

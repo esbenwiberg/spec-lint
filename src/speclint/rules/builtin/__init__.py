@@ -11,7 +11,6 @@ def register() -> dict:
     from . import (
         claim_redundancy,
         heading_redundancy,
-        manifest_valid,
         no_tbd,
         no_weasel_words,
         refs_coupling,
@@ -21,7 +20,6 @@ def register() -> dict:
     return collect_rules_from(
         claim_redundancy,
         heading_redundancy,
-        manifest_valid,
         no_tbd,
         no_weasel_words,
         refs_coupling,

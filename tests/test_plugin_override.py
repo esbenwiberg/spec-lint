@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import pytest
 
+from speclint.discovery import SpecCandidate
 from speclint.fixtures import assert_matches, run_fixture
 from speclint.ir import build_spec_ir
 from speclint.rules import load_rule_packages
@@ -52,9 +53,15 @@ def test_plugin_no_tbd_fires_on_xxx_not_tbd(tmp_path):
     """Proves the override actually swapped the check function — the
     builtin version would fire on TBD; the plugin version ignores it."""
     reg = load_rule_packages(["default", "testplugin"])
-    (tmp_path / "spec.yml").write_text("id: x\nstatus: accepted\n")
-    (tmp_path / "README.md").write_text("XXX is bad\nTBD is fine here\n")
-    ir = build_spec_ir(tmp_path)
+    readme = tmp_path / "README.md"
+    readme.write_text("XXX is bad\nTBD is fine here\n")
+    candidate = SpecCandidate(
+        name=tmp_path.name,
+        folder=tmp_path,
+        md_files=(readme,),
+        is_single_file=False,
+    )
+    ir = build_spec_ir(candidate)
 
     findings = reg.rules["no-tbd"].check(ir, {})
     messages = [f.message for f in findings]

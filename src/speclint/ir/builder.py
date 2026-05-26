@@ -2,14 +2,19 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
 import yaml
 from markdown_it import MarkdownIt
 
-from .types import Claim, Heading, Link, Manifest, SpecIR, Term
+from ..discovery import SpecCandidate
+from .types import Claim, Heading, Link, SpecIR, Term
 
 _MODAL_RE = re.compile(r"\b(MUST(?: NOT)?|SHALL(?: NOT)?|SHOULD(?: NOT)?|MAY)\b")
+# Gherkin / BDD step keywords. Conventionally capitalized at line start
+# (possibly indented). Lowercase variants would collide with prose use
+# ("Given the constraints, …"), so we anchor on the capitalized form.
+_GHERKIN_RE = re.compile(r"^\s*(Given|When|Then|And|But)\s+\S")
 _TERM_RE = re.compile(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})\b")
 _HOOK_TOKENS = (
     "acceptance",
@@ -28,56 +33,47 @@ _HOOK_TOKENS = (
 )
 
 
-def discover_spec_folders(root: Path, globs: list[str]) -> list[Path]:
-    """Return spec folder paths matching any of the given globs.
+def build_spec_ir(
+    candidate: SpecCandidate,
+    *,
+    repo_root: Path | None = None,
+    changed_paths: tuple[str, ...] | None = None,
+    embedder=None,
+    metadata_sidecar: str | None = None,
+) -> SpecIR:
+    """Build a SpecIR for one discovered spec.
 
-    A 'spec folder' is a directory that matches a glob ending in '/'.
+    The candidate carries the files to read; this function turns those
+    files into headings/links/claims/terms. Metadata is only loaded when
+    ``metadata_sidecar`` is given (e.g. ``"contract.yaml"``) and the
+    file exists in the spec folder — speclint imposes no schema, so any
+    YAML mapping is accepted and its raw keys land in ``ir.metadata``.
+
+    ``repo_root`` and ``changed_paths`` carry Path B coupling context.
     """
-    folders: set[Path] = set()
-    for pattern in globs:
-        pattern = pattern.rstrip("/")
-        for p in root.glob(pattern):
-            if p.is_dir():
-                folders.add(p.resolve())
-    return sorted(folders)
-
-
-def build_spec_ir(folder: Path, *, include: list[str] | None = None,
-                  ignore: list[str] | None = None,
-                  repo_root: Path | None = None,
-                  changed_paths: tuple[str, ...] | None = None,
-                  embedder=None) -> SpecIR:
-    """Build a SpecIR for a single spec folder.
-
-    Reads spec.yml (optional), all .md files matching include patterns, and
-    extracts headings, links, claims, and terms.
-
-    `repo_root` and `changed_paths` carry Path B coupling context. Pass them
-    when running coupling rules (e.g., from `git diff --name-only`). Path A
-    rules ignore them.
-    """
-    include = include or ["**/*.md"]
-    ignore = ignore or []
-
-    manifest, manifest_errors = _load_manifest(folder)
     ir = SpecIR(
-        folder=folder,
-        manifest=manifest,
-        manifest_errors=manifest_errors,
+        name=candidate.name,
+        folder=candidate.folder,
+        is_single_file=candidate.is_single_file,
+        files=list(candidate.file_relpaths),
         repo_root=repo_root,
         changed_paths=changed_paths,
         embedder=embedder,
     )
 
-    md_files = _collect_md_files(folder, include, ignore)
-    ir.files = [str(p.relative_to(folder)) for p in md_files]
+    if metadata_sidecar:
+        ir.metadata, ir.metadata_errors = _load_sidecar(
+            candidate.folder / metadata_sidecar
+        )
 
     md = MarkdownIt("commonmark")
     term_index: dict[str, list[tuple[str, int]]] = {}
 
-    for path in md_files:
-        rel = str(path.relative_to(folder))
-        text = path.read_text(encoding="utf-8", errors="replace")
+    for rel, abs_path in zip(ir.files, candidate.md_files):
+        try:
+            text = abs_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
         ir.raw_text[rel] = text
 
         tokens = md.parse(text)
@@ -94,78 +90,23 @@ def build_spec_ir(folder: Path, *, include: list[str] | None = None,
         Term(text=t, occurrences=tuple(occ)) for t, occ in sorted(term_index.items())
     ]
 
-    # Re-evaluate verification hooks now that we have all claims + headings
     ir.claims = [_attach_hook(c, ir) for c in ir.claims]
     return ir
 
 
-def _load_manifest(folder: Path) -> tuple[Manifest | None, list[str]]:
-    path = folder / "spec.yml"
+def _load_sidecar(path: Path) -> tuple[dict[str, Any], list[str]]:
+    """Read an optional metadata sidecar. Absent = empty dict, not an error
+    (speclint imposes no manifest). Present but malformed = empty dict +
+    a single error string, which an opt-in rule may surface."""
     if not path.exists():
-        return None, []
-    errors: list[str] = []
+        return {}, []
     try:
         raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     except yaml.YAMLError as e:
-        return None, [f"spec.yml: invalid YAML: {e}"]
-
+        return {}, [f"{path.name}: invalid YAML: {e}"]
     if not isinstance(raw, dict):
-        return None, ["spec.yml: top level must be a mapping"]
-
-    spec_id = raw.get("id")
-    status = raw.get("status")
-    if not isinstance(spec_id, str) or not spec_id:
-        errors.append("spec.yml: missing required string field `id`")
-    if not isinstance(status, str) or not status:
-        errors.append("spec.yml: missing required string field `status`")
-
-    valid_status = {"draft", "accepted", "implemented", "deprecated"}
-    if isinstance(status, str) and status and status not in valid_status:
-        errors.append(
-            f"spec.yml: status `{status}` not in {sorted(valid_status)}"
-        )
-
-    refs = raw.get("references", [])
-    if not isinstance(refs, list) or not all(isinstance(r, str) for r in refs):
-        errors.append("spec.yml: `references` must be a list of strings")
-        refs = []
-
-    related = raw.get("related", [])
-    if not isinstance(related, list) or not all(isinstance(r, str) for r in related):
-        errors.append("spec.yml: `related` must be a list of strings")
-        related = []
-
-    owner = raw.get("owner")
-    if owner is not None and not isinstance(owner, str):
-        errors.append("spec.yml: `owner` must be a string")
-        owner = None
-
-    if errors and (not isinstance(spec_id, str) or not isinstance(status, str)):
-        return None, errors
-
-    return (
-        Manifest(
-            id=spec_id if isinstance(spec_id, str) else "",
-            status=status if isinstance(status, str) else "",
-            owner=owner,
-            references=tuple(refs),
-            related=tuple(related),
-            raw=raw,
-        ),
-        errors,
-    )
-
-
-def _collect_md_files(folder: Path, include: list[str], ignore: list[str]) -> list[Path]:
-    matches: set[Path] = set()
-    for pattern in include:
-        for p in folder.glob(pattern):
-            if p.is_file():
-                matches.add(p.resolve())
-    for pattern in ignore:
-        for p in folder.glob(pattern):
-            matches.discard(p.resolve())
-    return sorted(matches)
+        return {}, [f"{path.name}: top level must be a mapping"]
+    return raw, []
 
 
 def _extract_headings(tokens, rel: str) -> Iterable[Heading]:
@@ -192,7 +133,6 @@ def _extract_links(tokens, rel: str) -> Iterable[Link]:
         for j, child in enumerate(parent.children):
             if child.type == "link_open":
                 href = child.attrs.get("href", "") if child.attrs else ""
-                # Capture link text
                 text_parts: list[str] = []
                 k = j + 1
                 while k < len(parent.children) and parent.children[k].type != "link_close":
@@ -222,13 +162,14 @@ def _extract_claims(text: str, rel: str) -> Iterable[Claim]:
         is_bullet_imperative = (
             stripped.startswith(("- ", "* ", "+ ")) and m is not None
         )
-        if m or is_bullet_imperative:
+        is_gherkin = _GHERKIN_RE.match(line) is not None
+        if m or is_bullet_imperative or is_gherkin:
             yield Claim(
                 file=rel,
                 line=i,
                 text=stripped,
                 modal=m.group(1) if m else None,
-                has_verification_hook=False,  # filled in later
+                has_verification_hook=False,
             )
 
 
@@ -239,9 +180,6 @@ def _extract_terms(text: str, rel: str) -> Iterable[tuple[str, int]]:
 
 
 def _attach_hook(claim: Claim, ir: SpecIR) -> Claim:
-    # Heuristic: a claim has a verification hook if the same file contains any
-    # hook token within ±3 lines, OR if a heading like "Acceptance" exists in
-    # any file.
     file_text = ir.raw_text.get(claim.file, "")
     lines = file_text.splitlines()
     start = max(0, claim.line - 4)

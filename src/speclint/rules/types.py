@@ -46,18 +46,25 @@ class ExpectedFinding:
 class Fixture:
     """A self-contained test case for a rule.
 
-    `files` is a map of relative path -> content for the spec folder. The
-    harness writes them into a tmp dir, builds the SpecIR, runs the rule,
-    and asserts findings match `expects` (or that no findings fire when
-    `expects` is empty).
+    ``files`` is a map of relative path -> content for the spec folder.
+    The harness writes them into a tmp dir, builds the SpecIR, runs the
+    rule, and asserts findings match ``expects`` (or that no findings
+    fire when ``expects`` is empty).
+
+    ``metadata`` is an optional dict written as a YAML sidecar named
+    ``sidecar_filename`` (default ``contract.yaml``) and loaded into
+    ``ir.metadata``. Use this when a rule reads metadata fields like
+    ``status`` or ``references``. Leave empty to exercise the
+    no-metadata path (most rules don't care).
 
     Path B fixtures additionally use:
-      - `repo_files`: files written at the repo root (paths relative to it,
-        outside the spec folder) — for resolving references globs.
-      - `changed_paths`: repo-root-relative paths treated as "modified in
-        this diff" — populates SpecIR.changed_paths. None means no diff
-        context (coupling rules short-circuit); empty tuple means a diff
-        ran but no files changed.
+      - ``repo_files``: files written at the repo root (paths relative
+        to it, outside the spec folder) — for resolving references
+        globs against repo state.
+      - ``changed_paths``: repo-root-relative paths treated as "modified
+        in this diff" — populates SpecIR.changed_paths. None means no
+        diff context (coupling rules short-circuit); empty tuple means
+        a diff ran but no files changed.
     """
 
     name: str
@@ -66,6 +73,8 @@ class Fixture:
     options: dict[str, Any] = field(default_factory=dict)
     repo_files: dict[str, str] = field(default_factory=dict)
     changed_paths: tuple[str, ...] | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+    sidecar_filename: str = "contract.yaml"
 
     @property
     def expects_no_findings(self) -> bool:
