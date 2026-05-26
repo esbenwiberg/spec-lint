@@ -276,10 +276,10 @@ dependencies = ["speclint"]
 my-team = "my_team_rules:register"
 ```
 
-`my_team_rules/__init__.py`:
+`my_team_rules/no_tbd.py`:
 
 ```python
-from speclint.rules.registry import collect_rules_from, rule
+from speclint.rules.registry import rule
 from speclint.rules.types import Finding, Fixture, ExpectedFinding
 
 
@@ -307,15 +307,22 @@ def check(ir, config):
                     file=path, line=i, message="Unresolved marker: TBD",
                 ))
     return findings
+```
+
+`my_team_rules/__init__.py`:
+
+```python
+from speclint.rules.registry import collect_rules_from
 
 
 def register():
-    import sys
-    return collect_rules_from(sys.modules[__name__])
+    from . import no_tbd      # import each rule module here
+    return collect_rules_from(no_tbd)
 ```
 
-For real packages with multiple rules, put each in its own module and
-import them inside `register()` — see [`docs/writing-rules.md`](docs/writing-rules.md).
+Same pattern as the built-in `default` package — see
+[`docs/writing-rules.md`](docs/writing-rules.md) for the full
+walkthrough.
 
 Activate it in `.speclint.yml`:
 
