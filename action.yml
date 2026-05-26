@@ -1,0 +1,151 @@
+name: "spec-lint"
+description: "Lint markdown spec folders. Path A quality rules + Path B coupling rules."
+author: "esbenwiberg"
+branding:
+  icon: "check-square"
+  color: "purple"
+
+inputs:
+  path:
+    description: "Working directory to lint."
+    required: false
+    default: "."
+  base-ref:
+    description: >
+      Git ref to diff against for Path B coupling rules. Defaults to the PR
+      base branch on `pull_request` events and to `HEAD~1` on `push` events.
+      Set to an empty string to disable Path B.
+    required: false
+    default: ""
+  fail-on:
+    description: "`error` | `warn` | `never` — exit-code threshold."
+    required: false
+    default: "error"
+  comment:
+    description: "Post a sticky PR comment with the report. Has no effect outside PR events."
+    required: false
+    default: "true"
+  python-version:
+    description: "Python version for the runner."
+    required: false
+    default: "3.12"
+  speclint-version:
+    description: >
+      Version of spec-lint to install. Use a PEP 508 spec (e.g. `>=0.1,<0.2`)
+      or a git ref (`git+https://github.com/.../spec-lint@<sha>`). Defaults to
+      installing this checked-out repo (editable), suitable for self-testing.
+    required: false
+    default: ""
+  github-token:
+    description: "Token used to post PR comments. Defaults to ${{ github.token }}."
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  exit-code:
+    description: "Exit code from `speclint check` (0 = passed at threshold)."
+    value: ${{ steps.run.outputs.exit-code }}
+  report-markdown-path:
+    description: "Path to the rendered markdown report on the runner."
+    value: ${{ steps.run.outputs.report-markdown-path }}
+  report-json-path:
+    description: "Path to the JSON report on the runner."
+    value: ${{ steps.run.outputs.report-json-path }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install spec-lint
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [[ -n "${{ inputs.speclint-version }}" ]]; then
+          python -m pip install --quiet "spec-lint${{ inputs.speclint-version }}" \
+            || python -m pip install --quiet "${{ inputs.speclint-version }}"
+        elif [[ -f "${{ github.action_path }}/pyproject.toml" ]]; then
+          python -m pip install --quiet "${{ github.action_path }}"
+        else
+          python -m pip install --quiet spec-lint
+        fi
+        speclint --version
+
+    - name: Resolve base ref
+      id: base
+      shell: bash
+      env:
+        INPUT_BASE_REF: ${{ inputs.base-ref }}
+        EVENT_NAME: ${{ github.event_name }}
+        PR_BASE: ${{ github.event.pull_request.base.ref }}
+      run: |
+        set -euo pipefail
+        if [[ -n "$INPUT_BASE_REF" ]]; then
+          echo "ref=$INPUT_BASE_REF" >> "$GITHUB_OUTPUT"
+        elif [[ "$EVENT_NAME" == "pull_request" && -n "$PR_BASE" ]]; then
+          # Ensure the base branch is fetched so the diff can resolve.
+          git -C "${{ inputs.path }}" fetch --no-tags --depth=200 origin "$PR_BASE" || true
+          echo "ref=origin/$PR_BASE" >> "$GITHUB_OUTPUT"
+        elif [[ "$EVENT_NAME" == "push" ]]; then
+          echo "ref=HEAD~1" >> "$GITHUB_OUTPUT"
+        else
+          echo "ref=" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Run spec-lint
+      id: run
+      shell: bash
+      env:
+        BASE_REF: ${{ steps.base.outputs.ref }}
+        FAIL_ON: ${{ inputs.fail-on }}
+        WORKDIR: ${{ inputs.path }}
+      run: |
+        set +e
+        set -uo pipefail
+        report_md="$RUNNER_TEMP/speclint-report.md"
+        report_json="$RUNNER_TEMP/speclint-report.json"
+
+        base_args=()
+        if [[ -n "$BASE_REF" ]]; then
+          base_args=(--base "$BASE_REF")
+        fi
+
+        # Inline annotations to PR diff (best-effort, never fails build)
+        speclint check "$WORKDIR" --format github "${base_args[@]}" --fail-on never || true
+
+        speclint check "$WORKDIR" --format markdown "${base_args[@]}" --fail-on never > "$report_md"
+        speclint check "$WORKDIR" --format json "${base_args[@]}" --fail-on never > "$report_json"
+
+        # Real run that drives the build status
+        speclint check "$WORKDIR" --format human "${base_args[@]}" --fail-on "$FAIL_ON"
+        ec=$?
+
+        echo "exit-code=$ec" >> "$GITHUB_OUTPUT"
+        echo "report-markdown-path=$report_md" >> "$GITHUB_OUTPUT"
+        echo "report-json-path=$report_json" >> "$GITHUB_OUTPUT"
+        exit $ec
+
+    - name: Post sticky PR comment
+      if: always() && inputs.comment == 'true' && github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ inputs.github-token }}
+        script: |
+          const fs = require('fs');
+          const body = fs.readFileSync('${{ steps.run.outputs.report-markdown-path }}', 'utf8');
+          const marker = '<!-- speclint:report -->';
+          const { owner, repo } = context.repo;
+          const issue_number = context.issue.number;
+
+          const { data: comments } = await github.rest.issues.listComments({
+            owner, repo, issue_number, per_page: 100,
+          });
+          const prior = comments.find(c => c.body && c.body.includes(marker));
+          if (prior) {
+            await github.rest.issues.updateComment({ owner, repo, comment_id: prior.id, body });
+          } else {
+            await github.rest.issues.createComment({ owner, repo, issue_number, body });
+          }

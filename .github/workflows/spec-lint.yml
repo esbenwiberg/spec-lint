@@ -1,0 +1,32 @@
+name: spec-lint (self-test)
+
+# Dogfoods the composite Action defined in this repo. Doubles as a working
+# example for consumers — copy this file into your repo, drop the `uses: ./`
+# in favor of `uses: esbenwiberg/spec-lint@v0.1`, and you're set.
+
+on:
+  pull_request:
+    paths:
+      - "specs/**"
+      - "src/**"
+      - "action.yml"
+      - ".github/workflows/spec-lint.yml"
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write  # required to post the sticky PR comment
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Path B needs history to diff against the base ref.
+          fetch-depth: 0
+
+      - uses: ./
+        with:
+          fail-on: error  # warnings allowed, errors block

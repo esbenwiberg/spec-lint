@@ -1,0 +1,6 @@
+id: example-spec
+status: accepted
+owner: esben
+references:
+  - "src/example/**"
+related: []

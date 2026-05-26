@@ -1,0 +1,38 @@
+# speclint configuration. Drop this file at the repo root as
+# `.speclint.yml`. All keys are optional — defaults shown below.
+# See README.md → Configuration for the full reference.
+
+# Rule packages to load, in order. Later packages override earlier ones
+# by rule id. Each package registers via the `speclint.rules` entry point.
+packages:
+  - default
+
+# Glob patterns (relative to repo root) that mark spec folders.
+specs:
+  - "specs/*/"
+
+# Markdown files inside each spec folder to include / ignore.
+include:
+  - "**/*.md"
+ignore: []
+
+# Per-rule overrides. A bare string sets severity; a mapping passes options.
+# Examples:
+#   no-tbd: error                       # bump severity
+#   no-weasel-words: off                # disable
+#   heading-redundancy:
+#     severity: warn
+#     threshold: 0.92                   # Tier 2 similarity threshold
+rules: {}
+
+# Exit-code threshold. error (default) fails only on errors;
+# warn fails on any warning; never always exits 0.
+fail_on: error
+
+# Tier 3 LLM rules. None ship by default — this section only matters
+# once a plugin registers LLM-tier rules.
+llm:
+  enabled: true
+  transport: auto       # auto | api | openai | cli | codex
+  model: null           # null = each transport's default
+  cache: .speclint-cache/llm/
