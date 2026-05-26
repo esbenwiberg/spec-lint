@@ -5,11 +5,17 @@ specs accumulate — TBDs, weasel words, dangling references, near-duplicate
 sections, requirements that lack acceptance hooks — before the spec lands
 in main.
 
-- **Format-agnostic IR.** Parses markdown into headings / links / claims /
-  terms, plus a small `spec.yml` manifest per folder.
-- **Three tiers.** Static (regex/AST), semantic (embeddings, deterministic),
-  LLM (pre-wired, no default rules in v1). Each tier gracefully skips if
-  its dependency isn't installed.
+- **Format-agnostic.** No schema, no required manifest. Drop spec-lint in
+  any repo and it lints whatever markdown layout you already have under
+  conventional roots (`specs/`, `docs/specs/`, `features/`, `rfcs/`,
+  `.kiro/specs/`, `openspec/`, and more).
+- **Three tiers.** Static (regex/AST), semantic (embeddings,
+  deterministic), LLM (pre-wired, no default rules in v1). Each tier
+  gracefully skips if its dependency isn't installed.
+- **Opt-in metadata.** Rules that need structured data (status,
+  references) read from an optional sidecar YAML you nominate
+  (`contract.yaml`, `spec.yml`, `meta.yml`, anything). No schema is
+  imposed — field names are configurable per rule.
 - **Plugin-friendly.** Team rule packages register via entry points and
   override built-ins last-package-wins, with an audit log.
 - **PR-native.** GitHub Action posts a sticky comment, drops inline
@@ -42,57 +48,90 @@ Against the bundled `specs/example-spec/`:
           hint: Replace with a measurable threshold or metric.
    warn  no-tbd                    README.md:13  Unresolved marker: TBD
           hint: Resolve, move to open-questions.md, or set status: draft.
-   warn  refs-resolve              spec.yml  `references` glob matches no files: src/example/**
-          hint: Remove the entry, fix the path, or move the spec to status: deprecated.
+   …
 
-summary: 0 error(s), 7 warn(s), 0 info across 1 spec(s), 5 rule(s) evaluated
+summary: 0 error(s), 6 warn(s), 0 info across 1 spec(s), 4 rule(s) evaluated
 ```
 
 Exit code is driven by `--fail-on` (`error` | `warn` | `never`, default
-`error`). `7 warn` with default settings → exit 0; pass `--fail-on warn`
-to make warnings fail the build.
+`error`). With defaults, warns don't fail the build — pass
+`--fail-on warn` if they should.
 
-## Spec folder layout
+## Spec discovery
 
-A spec is a directory under `specs/`:
+A *spec* is one of two things:
+
+- A folder containing one or more direct `.md` files. Its body is just
+  those direct `.md` files (sub-folders become their own specs).
+- A `.md` file sitting directly under a known root, with no folder of
+  its own. Common for ADR-style and PEP-style flat layouts.
+
+speclint walks a curated list of conventional roots out of the box:
+
+```
+specs/           spec/            docs/specs/       docs/spec/
+.kiro/specs/     openspec/specs/  openspec/changes/
+features/        feats/           docs/features/    docs/feats/
+briefs/          docs/briefs/     rfcs/             docs/rfcs/
+```
+
+Override or extend the list in `.speclint.yml` (see Configuration).
+
+No manifest is required. speclint adapts to *your* spec layout, not the
+other way around.
+
+## Metadata sidecar (optional)
+
+Some rules — `refs-resolve`, `refs-coupling`, the draft-status skip in
+`no-tbd` — need structured data the markdown can't supply. They read it
+from an optional YAML sidecar in each spec folder. You pick the
+filename; speclint imposes no schema.
+
+`.speclint.yml`:
+
+```yaml
+metadata:
+  sidecar: contract.yaml      # or spec.yml, meta.yml, anything
+```
+
+Then a spec folder can look like:
 
 ```
 specs/
   payments/
-    spec.yml          # required manifest
-    README.md         # main body
-    api.md            # supplementary docs
-    open-questions.md
+    contract.yaml             # any YAML mapping; speclint reads keys on demand
+    README.md
+    api.md
 ```
 
-`spec.yml`:
+`contract.yaml` (example — your fields, your call):
 
 ```yaml
-id: payments
-status: accepted          # draft | accepted | implemented | deprecated
-owner: payments-team
-references:               # globs of code/tests this spec owns
+status: accepted              # used by no-tbd to skip draft specs
+references:                   # used by refs-resolve / refs-coupling
   - "src/payments/**"
   - "tests/payments/**"
-related:                  # other spec ids
-  - billing
+owner: payments-team          # ignored by core; available to plugins
 ```
+
+When the sidecar is absent, metadata-driven rules silently no-op for
+that spec. Everything else (TBD/weasel/heading-redundancy/…) keeps
+working on the markdown alone.
 
 ## What it checks
 
 | Rule | Tier | Default | Fires when |
 |---|---|---|---|
-| `manifest-valid` | static | error | `spec.yml` is missing required fields or has an invalid `status` |
-| `no-tbd` | static | warn | A `TBD` / `FIXME` / `XXX` marker is left in spec text |
-| `no-weasel-words` | static | warn | Vague qualifiers (`fast`, `robust`, `scalable`, `user-friendly`, …) appear in prose |
-| `refs-resolve` | static | warn | A `references:` glob in `spec.yml` matches zero files in the repo |
-| `refs-coupling` | static | warn | The diff touches files under `references:` but the spec folder itself isn't updated (Path B) |
-| `heading-redundancy` | semantic | info | Two headings in the same file have near-identical embeddings (likely duplicate sections) |
-| `claim-redundancy` | semantic | info | Two MUST/SHALL claims in the same file have near-identical embeddings (likely duplicate requirement) |
+| `no-tbd` | static | warn | A `TBD` / `TODO` / `FIXME` / `???` marker is left in spec text. Skipped when sidecar declares `status: draft`. |
+| `no-weasel-words` | static | warn | Vague qualifiers (`fast`, `robust`, `scalable`, `user-friendly`, …) appear in prose. |
+| `refs-resolve` | static | warn | A `references` glob in the sidecar matches zero files in the repo. Opt-in via metadata. |
+| `refs-coupling` | static | warn | The diff touches files under `references` but the spec folder itself isn't updated (Path B). Opt-in via metadata. |
+| `heading-redundancy` | semantic | info | Two headings in the same file have near-identical embeddings (likely duplicate sections). |
+| `claim-redundancy` | semantic | info | Two MUST/SHALL claims in the same file have near-identical embeddings (likely duplicate requirement). |
 
-`refs-coupling` is **Path B** — it's only meaningful with a diff context.
-Pass `--base origin/main` (or `--changed-files-from file.txt`) to enable
-it. The GitHub Action does this automatically.
+`refs-coupling` is **Path B** — it's only meaningful with a diff
+context. Pass `--base origin/main` (or `--changed-files-from file.txt`)
+to enable it. The GitHub Action does this automatically.
 
 ## Configuration
 
@@ -107,16 +146,23 @@ packages:
   - default
   - my-team-rules           # your plugin's entry-point name
 
-# Globs (relative to repo root) that mark spec folders.
-specs:
-  - "specs/*/"
-  - "docs/rfcs/*/"
+# Override the discovery roots entirely. Default = a curated list of
+# conventional SDD-framework folders (see Spec discovery).
+# roots:
+#   - "specs"
+#   - "docs/rfcs"
 
-# Markdown files inside each spec folder to include / ignore.
-include:
-  - "**/*.md"
+# Add roots without replacing the defaults — for ADR-style layouts, etc.
+extra_roots:
+  - "adrs"
+
+# fnmatch patterns (relative to repo root) to skip during discovery.
 ignore:
   - "**/scratch/**"
+
+# Opt-in metadata sidecar — see "Metadata sidecar (optional)" above.
+metadata:
+  sidecar: contract.yaml
 
 # Per-rule overrides. A bare string sets severity; a mapping passes options.
 rules:
@@ -125,6 +171,8 @@ rules:
   heading-redundancy:
     severity: warn
     threshold: 0.92                   # raise the similarity bar
+  refs-resolve:
+    field: owns                       # rename the metadata key you read from
   claim-redundancy:
     threshold: 0.90
 
@@ -240,10 +288,7 @@ from speclint.rules.types import Finding, Fixture, ExpectedFinding
     fixtures=[
         Fixture(
             name="fires-on-tbd",
-            files={
-                "spec.yml": "id: x\nstatus: accepted\n",
-                "README.md": "# x\n\nTBD: figure this out\n",
-            },
+            files={"README.md": "# x\n\nTBD: figure this out\n"},
             expects=(ExpectedFinding(message_contains="TBD"),),
         ),
     ],
@@ -280,6 +325,11 @@ override log:
   no-tbd: default:1.0.0 -> my-team:2.0.0
 ```
 
+A plugin rule that reads metadata follows the same pattern as the
+built-in `refs-resolve` — read `ir.metadata.get(field)` with a
+configurable key name, and silently no-op when it's absent so users
+who haven't opted into a sidecar aren't penalized.
+
 ## Optional tiers — graceful skip
 
 speclint installs the core tier (Tier 1) unconditionally. Tier 2 and
@@ -302,16 +352,16 @@ Two complementary modes:
 - **Path A — quality.** Inspect a spec on its own. Runs on every push,
   every PR, locally with `speclint check .`. Most rules live here.
 - **Path B — coupling.** Inspect a spec *against the diff*. Catches
-  "you edited the code but not the spec" and "you edited the spec but
-  the referenced code didn't move." Activated by `--base <ref>` or
-  `--changed-files-from <file>`. `refs-coupling` lives here.
+  "you edited the code but not the spec." Activated by `--base <ref>`
+  or `--changed-files-from <file>`. `refs-coupling` lives here and
+  requires metadata sidecar opt-in.
 
 ## Status
 
-v0.1.0 — platform is feature-complete. Seven rules ship; the
-infrastructure for adding more is small and well-tested (162 tests,
-94% coverage). Tier 3 is wired but ships zero default LLM rules by
-design — teams opt in via plugins.
+v0.1.0 — platform is feature-complete. Six rules ship; the
+infrastructure for adding more is small and well-tested (166 tests).
+Tier 3 is wired but ships zero default LLM rules by design — teams opt
+in via plugins.
 
 ## License
 

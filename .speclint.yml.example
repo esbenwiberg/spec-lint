@@ -7,19 +7,33 @@
 packages:
   - default
 
-# Glob patterns (relative to repo root) that mark spec folders.
-specs:
-  - "specs/*/"
+# Spec discovery roots. Omit to use the built-in default list (specs/,
+# docs/specs/, features/, rfcs/, .kiro/specs/, openspec/, …). Set this
+# to *replace* the defaults; use `extra_roots` to add to them.
+# roots:
+#   - "specs"
+#   - "docs/rfcs"
 
-# Markdown files inside each spec folder to include / ignore.
-include:
-  - "**/*.md"
+# Add roots without replacing the defaults — handy for ADR-style or
+# bespoke layouts.
+extra_roots: []
+
+# fnmatch patterns (relative to repo root) to skip during discovery.
 ignore: []
+
+# Opt-in metadata sidecar. When set, each spec folder is checked for
+# a YAML file with this name; its contents land in `ir.metadata` for
+# rules that need structured data (refs-resolve, refs-coupling,
+# no-tbd's draft-skip). No schema is imposed.
+metadata:
+  sidecar: null            # e.g. "contract.yaml", "spec.yml", "meta.yml"
 
 # Per-rule overrides. A bare string sets severity; a mapping passes options.
 # Examples:
 #   no-tbd: error                       # bump severity
 #   no-weasel-words: off                # disable
+#   refs-resolve:
+#     field: owns                       # rename the metadata key the rule reads
 #   heading-redundancy:
 #     severity: warn
 #     threshold: 0.92                   # Tier 2 similarity threshold
