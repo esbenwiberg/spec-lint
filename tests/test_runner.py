@@ -51,5 +51,10 @@ def test_run_skips_llm_rule_when_no_transport_available(monkeypatch):
     monkeypatch.setattr("speclint.runner.select_transport", lambda _: None)
     cfg = Config()
     result = run(REPO, cfg)
-    assert set(result.rules_skipped_llm) == {"no-weasel-words-llm", "spec-impl-drift"}
+    assert set(result.rules_skipped_llm) == {
+        "internal-contradiction",
+        "no-weasel-words-llm",
+        "spec-impl-drift",
+        "testability-of-claims",
+    }
     assert result.transport_chosen is None

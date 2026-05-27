@@ -12,6 +12,7 @@ def register() -> dict:
         claim_redundancy,
         claims_have_hooks,
         heading_redundancy,
+        internal_contradiction,
         no_tbd,
         no_weasel_words,
         no_weasel_words_llm,
@@ -19,12 +20,14 @@ def register() -> dict:
         refs_infer_coupling,
         refs_resolve,
         spec_impl_drift,
+        testability_of_claims,
     )
 
     return collect_rules_from(
         claim_redundancy,
         claims_have_hooks,
         heading_redundancy,
+        internal_contradiction,
         no_tbd,
         no_weasel_words,
         no_weasel_words_llm,
@@ -32,4 +35,5 @@ def register() -> dict:
         refs_infer_coupling,
         refs_resolve,
         spec_impl_drift,
+        testability_of_claims,
     )
