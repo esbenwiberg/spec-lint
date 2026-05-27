@@ -41,7 +41,8 @@ def render_human(result: RunResult) -> str:
         buf.write(f"\n[spec] {spec}\n")
         for f in sorted(spec_findings, key=lambda x: (x.file or "", x.line or 0)):
             loc = f.file if f.line is None else f"{f.file}:{f.line}"
-            buf.write(f"  {f.severity:>5}  {f.rule_id:<24}  {loc}  {f.message}\n")
+            fix_tag = "  [fixable]" if f.fix is not None else ""
+            buf.write(f"  {f.severity:>5}  {f.rule_id:<24}  {loc}  {f.message}{fix_tag}\n")
             if f.hint:
                 buf.write(f"          hint: {f.hint}\n")
 

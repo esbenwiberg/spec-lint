@@ -31,7 +31,12 @@ metadata:
 # Per-rule overrides. A bare string sets severity; a mapping passes options.
 # Examples:
 #   no-tbd: error                       # bump severity
-#   no-weasel-words: off                # disable
+#   no-weasel-words: "off"              # disable (quote — bare `off` is YAML boolean)
+#   claims-have-hooks:
+#     claims_field: scenarios[*].id
+#     hooks_field:                      # accepts string or list of paths
+#       - required_facts[*].proves[*]
+#       - human_review[*].proves[*]
 #   refs-resolve:
 #     # `field` reads list-of-strings from metadata. Use a dotted path
 #     # with [*] to walk nested shapes — e.g. autopod-style contracts:
@@ -43,6 +48,17 @@ metadata:
 #                                       # are reliable enough on your specs
 #   no-weasel-words-llm:
 #     severity: warn                    # confirmed claims promoted to warn
+#   spec-impl-drift:
+#     severity: warn                    # bump from info once trusted
+#     artifacts_field:                  # union multiple schemas if mixed
+#       - required_facts[*].artifact.path
+#       - acceptance_criteria[*].test[*]
+#     max_artifacts: 3                  # cap LLM payload per spec
+#     max_lines: 200
+#   internal-contradiction:
+#     severity: warn
+#   testability-of-claims:
+#     severity: warn
 #   heading-redundancy:
 #     severity: warn
 #     threshold: 0.92                   # Tier 2 similarity threshold
@@ -52,11 +68,12 @@ rules: {}
 # warn fails on any warning; never always exits 0.
 fail_on: error
 
-# Tier 3 LLM rules. `no-weasel-words-llm` ships in the default package —
-# it's a second-pass classifier that promotes low-signal weasel hits
-# (fast/just/simply/easy/modern) from `info` to `warn` when a small
-# model confirms they're real unmeasurable claims. Skipped silently
-# unless a transport is available.
+# Tier 3 LLM rules. Four default rules use the transport when available:
+#   - no-weasel-words-llm    (promote weasel hits from info to warn)
+#   - spec-impl-drift        (does the code actually do what the spec says?)
+#   - internal-contradiction (two claims in the spec that can't both hold)
+#   - testability-of-claims  (claims that read fine but can't be tested)
+# All four skip silently unless a transport is available.
 llm:
   enabled: true
   transport: auto       # auto | api | openai | cli | codex

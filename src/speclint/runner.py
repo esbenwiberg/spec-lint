@@ -134,6 +134,8 @@ def _run_rules_on_ir(
                         message=f.message,
                         hint=f.hint,
                         spec=ir.name,
+                        fix=f.fix,
+                        anchor=f.anchor,
                     )
                 )
         except Exception as e:  # noqa: BLE001

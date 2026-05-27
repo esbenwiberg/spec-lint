@@ -354,7 +354,7 @@ The shape is deliberately ESLint-like, with some honest differences.
 | **Rule API** | `create(context) → { Node: visitor }` (AST visitor) | `check(ir, config) → list[Finding]` (whole-spec function) |
 | **Severity model** | `off | warn | error` | `off | info | warn | error` |
 | **Test harness** | `RuleTester` with `valid` / `invalid` cases | `Fixture` declared next to the rule; `run_fixture` runs the same code path as prod |
-| **Fixable findings** | `--fix` writes back transformed AST | Not yet — findings are read-only in v0.1 |
+| **Fixable findings** | `--fix` writes back transformed AST | `--fix` applies `Patch` objects rules attach to findings (literal substring replace, refuses ambiguous matches) |
 | **Discovery** | Walks `.js`/`.ts` files | Walks markdown under conventional roots (no required manifest) |
 
 **Where it diverges, on purpose:**
@@ -371,8 +371,14 @@ The shape is deliberately ESLint-like, with some honest differences.
   next to the rule definition, and the harness uses the production
   code path. ESLint's `RuleTester` is bolted on; here it's the
   contract.
-- **No `--fix`.** Specs are prose; autofix has a much higher false-
-  positive cost than for code. Out of scope for v0.1.
+- **Auto-fix is opt-in per finding.** A rule attaches a `Patch(path,
+  old, new, replace_all=False)` to a `Finding` when the fix is a
+  literal substring replacement that obviously closes the issue.
+  `speclint check --fix` applies them; ambiguous (`old` appears more
+  than once and `replace_all=False`) or stale (`old` not present)
+  patches are refused with a reason. Specs are prose so most rules
+  shouldn't emit fixes — reserve it for mechanical drifts like
+  renames and typos.
 
 If you've written ESLint plugins before, the mental model
 transfers cleanly. The rule body is simpler (no visitor protocol),

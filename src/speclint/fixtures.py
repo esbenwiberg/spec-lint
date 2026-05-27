@@ -114,4 +114,6 @@ def _matches(expected: ExpectedFinding, finding: Finding) -> bool:
         return False
     if expected.message_contains is not None and expected.message_contains not in finding.message:
         return False
+    if expected.has_fix is not None and expected.has_fix != (finding.fix is not None):
+        return False
     return True

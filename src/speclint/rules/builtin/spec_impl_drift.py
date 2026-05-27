@@ -30,6 +30,8 @@ from typing import Any
 from ...ir.types import SpecIR
 from ..registry import rule
 from ..types import ExpectedFinding, Finding, Fixture
+from ...rules.types import Patch
+from ._evidence import find_line
 from ._metadata import extract_strings
 
 
@@ -41,21 +43,34 @@ _PROMPT_HEADER = (
     "something the spec says it should not (or fails to do something "
     "the spec requires).\n\n"
     "Return ONLY a JSON object with one key, `mismatches`, whose value "
-    "is an array of objects with keys: `claim` (short excerpt of the "
-    "spec claim, <=120 chars), `artifact` (the path you found the "
-    "contradiction in), `mismatch` (one sentence describing the "
-    "divergence). If nothing contradicts the spec, return "
-    "{\"mismatches\": []}. No prose, no markdown, just JSON.\n\n"
+    "is an array of objects with keys:\n"
+    "  - `claim`: short excerpt of the spec claim, <=120 chars\n"
+    "  - `artifact`: the path you found the contradiction in\n"
+    "  - `evidence`: a VERBATIM substring of one line from the "
+    "artifact that demonstrates the mismatch — copy it exactly, "
+    "<=120 chars\n"
+    "  - `mismatch`: one sentence describing the divergence\n"
+    "  - `fix_old` (OPTIONAL): include ONLY when the drift is a "
+    "mechanical rename or typo that can be closed by a literal "
+    "find/replace. The exact string in the artifact that should be "
+    "replaced. Omit entirely if the fix needs human judgment.\n"
+    "  - `fix_new` (OPTIONAL, paired with `fix_old`): the replacement "
+    "string.\n"
+    "  - `fix_all` (OPTIONAL boolean, default false): true ONLY for "
+    "renames where every occurrence in the file should be replaced.\n"
+    "If nothing contradicts the spec, return {\"mismatches\": []}. "
+    "No prose, no markdown, just JSON.\n\n"
     "Do not flag absent features the spec doesn't mention. Do not "
     "flag minor stylistic differences. Do not flag tests that pass — "
     "passing tests are evidence the spec holds. Only flag concrete, "
-    "named contradictions you can point at.\n\n"
+    "named contradictions you can point at. Only suggest `fix_old`/"
+    "`fix_new` when the fix is OBVIOUSLY safe — when in doubt, omit.\n\n"
 )
 
 
 _FIXTURES = [
     Fixture(
-        name="real-mismatch-fires",
+        name="real-mismatch-anchors-to-artifact-line",
         files={"brief.md": "# Login\n\nThe API MUST reject empty passwords.\n"},
         metadata={
             "required_facts": [
@@ -70,14 +85,61 @@ _FIXTURES = [
                 "mismatches": [{
                     "claim": "API MUST reject empty passwords",
                     "artifact": "src/auth.py",
+                    "evidence": "return True",
                     "mismatch": "login() returns True without validating password is non-empty",
                 }],
             }),
         },
         expects=(
             ExpectedFinding(
-                file="contract.yaml",
+                file="src/auth.py",
+                line=2,
                 message_contains="src/auth.py",
+            ),
+        ),
+    ),
+    Fixture(
+        name="missing-evidence-falls-back-to-sidecar",
+        files={"brief.md": "# x\n\nMUST do thing.\n"},
+        metadata={"required_facts": [{"artifact": {"path": "src/x.py"}}]},
+        repo_files={"src/x.py": "def x(): pass\n"},
+        options={
+            "_llm_call": lambda prompt: json.dumps({
+                "mismatches": [{
+                    "claim": "MUST do thing",
+                    "artifact": "src/x.py",
+                    "mismatch": "doesn't do thing",
+                }],
+            }),
+        },
+        expects=(
+            ExpectedFinding(
+                file="contract.yaml",
+                line=None,
+                message_contains="src/x.py",
+            ),
+        ),
+    ),
+    Fixture(
+        name="unresolvable-evidence-falls-back-to-sidecar",
+        files={"brief.md": "# x\n\nMUST do thing.\n"},
+        metadata={"required_facts": [{"artifact": {"path": "src/x.py"}}]},
+        repo_files={"src/x.py": "def x(): pass\n"},
+        options={
+            "_llm_call": lambda prompt: json.dumps({
+                "mismatches": [{
+                    "claim": "MUST do thing",
+                    "artifact": "src/x.py",
+                    "evidence": "totally hallucinated string nowhere in file",
+                    "mismatch": "doesn't do thing",
+                }],
+            }),
+        },
+        expects=(
+            ExpectedFinding(
+                file="contract.yaml",
+                line=None,
+                message_contains="src/x.py",
             ),
         ),
     ),
@@ -143,14 +205,16 @@ _FIXTURES = [
         options={
             "_llm_call": lambda prompt: json.dumps({
                 "mismatches": [
-                    {"claim": "MUST validate", "artifact": "src/a.py", "mismatch": "no validation"},
-                    {"claim": "MUST log", "artifact": "src/b.py", "mismatch": "no logging"},
+                    {"claim": "MUST validate", "artifact": "src/a.py",
+                     "evidence": "def a(): pass", "mismatch": "no validation"},
+                    {"claim": "MUST log", "artifact": "src/b.py",
+                     "evidence": "def b(): pass", "mismatch": "no logging"},
                 ],
             }),
         },
         expects=(
-            ExpectedFinding(message_contains="src/a.py"),
-            ExpectedFinding(message_contains="src/b.py"),
+            ExpectedFinding(file="src/a.py", line=1, message_contains="src/a.py"),
+            ExpectedFinding(file="src/b.py", line=1, message_contains="src/b.py"),
         ),
     ),
     Fixture(
@@ -167,6 +231,7 @@ _FIXTURES = [
                 json.dumps({"mismatches": [{
                     "claim": "API MUST validate inputs",
                     "artifact": "tests/test_api.py",
+                    "evidence": "def test_api(): pass",
                     "mismatch": "test does not assert validation",
                 }]})
                 if "tests/test_api.py" in prompt
@@ -176,7 +241,7 @@ _FIXTURES = [
             ),
         },
         expects=(
-            ExpectedFinding(message_contains="tests/test_api.py"),
+            ExpectedFinding(file="tests/test_api.py", line=1, message_contains="tests/test_api.py"),
         ),
     ),
     Fixture(
@@ -201,6 +266,74 @@ _FIXTURES = [
             ),
         },
         expects=(),
+    ),
+    Fixture(
+        name="rename-fix-emits-replace-all-patch",
+        files={"brief.md": "# rename\n\nClass `started-lock` was renamed to `progress-lock`.\n"},
+        metadata={"required_facts": [{"artifact": {"path": "src/timeline.css"}}]},
+        repo_files={
+            "src/timeline.css": ".started-lock { color: red; }\n.started-lock-bar { x: 1; }\n",
+        },
+        options={
+            "_llm_call": lambda prompt: json.dumps({
+                "mismatches": [{
+                    "claim": "renamed to progress-lock",
+                    "artifact": "src/timeline.css",
+                    "evidence": ".started-lock",
+                    "mismatch": "still uses started-lock class name",
+                    "fix_old": "started-lock",
+                    "fix_new": "progress-lock",
+                    "fix_all": True,
+                }],
+            }),
+        },
+        expects=(
+            ExpectedFinding(
+                file="src/timeline.css",
+                line=1,
+                has_fix=True,
+            ),
+        ),
+    ),
+    Fixture(
+        name="ambiguous-fix-without-fix_old-skipped",
+        files={"brief.md": "# x\n\nMUST validate input.\n"},
+        metadata={"required_facts": [{"artifact": {"path": "src/y.py"}}]},
+        repo_files={"src/y.py": "def y(): pass\n"},
+        options={
+            "_llm_call": lambda prompt: json.dumps({
+                "mismatches": [{
+                    "claim": "MUST validate input",
+                    "artifact": "src/y.py",
+                    "evidence": "def y(): pass",
+                    "mismatch": "no validation",
+                }],
+            }),
+        },
+        expects=(
+            ExpectedFinding(file="src/y.py", line=1, has_fix=False),
+        ),
+    ),
+    Fixture(
+        name="hallucinated-fix_old-dropped",
+        files={"brief.md": "# x\n\nMUST validate.\n"},
+        metadata={"required_facts": [{"artifact": {"path": "src/y.py"}}]},
+        repo_files={"src/y.py": "def y(): pass\n"},
+        options={
+            "_llm_call": lambda prompt: json.dumps({
+                "mismatches": [{
+                    "claim": "MUST validate",
+                    "artifact": "src/y.py",
+                    "evidence": "def y(): pass",
+                    "mismatch": "no validation",
+                    "fix_old": "never-appeared-in-the-file",
+                    "fix_new": "anything",
+                }],
+            }),
+        },
+        expects=(
+            ExpectedFinding(file="src/y.py", line=1, has_fix=False),
+        ),
     ),
     Fixture(
         name="respects-max-artifacts-cap",
@@ -297,28 +430,70 @@ def check(ir: SpecIR, config: dict[str, Any]) -> list[Finding]:
 
     severity = config.get("severity", "info")
     sidecar_name = _guess_sidecar(ir)
+    snippet_by_path = dict(snippets)
     findings: list[Finding] = []
     for m in mismatches:
         artifact = m.get("artifact", "")
         claim = m.get("claim", "")
         body = m.get("mismatch", "")
+        evidence = m.get("evidence", "")
         if not (artifact and body):
             continue
+
+        # Anchor to artifact:line via the quoted evidence. Falls back to
+        # the sidecar (line=None) only when the LLM gave us no usable
+        # quote — drops the precision but keeps the finding visible.
+        anchor_file = sidecar_name
+        anchor_line: int | None = None
+        anchor_scope: str = "spec"
+        snippet = snippet_by_path.get(artifact)
+        if snippet and evidence:
+            line = find_line(snippet, evidence)
+            if line is not None:
+                anchor_file = artifact
+                anchor_line = line
+                anchor_scope = "repo"
+
+        fix = _build_patch(m, artifact, snippet)
+
         findings.append(
             Finding(
                 rule_id="spec-impl-drift",
                 severity=severity,
-                file=sidecar_name,
-                line=None,
+                file=anchor_file,
+                line=anchor_line,
+                anchor=anchor_scope,  # type: ignore[arg-type]
                 message=f"Spec/impl drift in {artifact}: {body}",
                 hint=(
                     f"Claim: {claim!r}. Either update the spec to match "
                     "the implementation, or update the implementation "
                     "to honor the spec."
                 ),
+                fix=fix,
             )
         )
     return findings
+
+
+def _build_patch(m: dict[str, Any], artifact: str, snippet: str | None) -> Patch | None:
+    """Construct a Patch only when the LLM proposed a mechanically safe
+    find/replace AND the `fix_old` actually appears in the snippet we
+    showed it. Silently drops anything dubious — the finding stays, the
+    fix doesn't."""
+    fix_old = m.get("fix_old")
+    fix_new = m.get("fix_new")
+    if not isinstance(fix_old, str) or not isinstance(fix_new, str):
+        return None
+    if not fix_old or fix_old == fix_new:
+        return None
+    if snippet is None or fix_old not in snippet:
+        return None
+    return Patch(
+        path=artifact,
+        old=fix_old,
+        new=fix_new,
+        replace_all=bool(m.get("fix_all", False)),
+    )
 
 
 def _read_truncated(repo_root, rel_path: str, max_lines: int) -> str | None:

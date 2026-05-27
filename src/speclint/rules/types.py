@@ -10,6 +10,34 @@ SEVERITY_RANK: dict[str, int] = {"off": -1, "info": 0, "warn": 1, "error": 2}
 
 
 @dataclass(frozen=True)
+class Patch:
+    """A single literal substring replacement applied to a repo file.
+
+    ``path`` is repo-root-relative. ``old`` must appear in the file's
+    current contents — when ``replace_all=False`` it must appear exactly
+    once (we refuse ambiguous patches); when ``True`` every occurrence
+    is rewritten (used for renames). Multi-line strings are fine; this
+    is a literal find/replace, not regex.
+    """
+
+    path: str
+    old: str
+    new: str
+    replace_all: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "path": self.path,
+            "old": self.old,
+            "new": self.new,
+            "replace_all": self.replace_all,
+        }
+
+
+Anchor = Literal["spec", "repo"]
+
+
+@dataclass(frozen=True)
 class Finding:
     rule_id: str
     severity: Severity
@@ -18,6 +46,11 @@ class Finding:
     message: str
     hint: str | None = None
     spec: str | None = None  # spec folder name; filled by runner
+    fix: Patch | None = None  # opt-in auto-fix; applied when CLI --fix is passed
+    # Whether `file` is relative to the spec folder (default — most rules)
+    # or to the repo root (rules that anchor to artifacts, e.g.
+    # spec-impl-drift). Reporters use this to build clickable links.
+    anchor: Anchor = "spec"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -26,8 +59,10 @@ class Finding:
             "spec": self.spec,
             "file": self.file,
             "line": self.line,
+            "anchor": self.anchor,
             "message": self.message,
             "hint": self.hint,
+            "fix": self.fix.to_dict() if self.fix else None,
         }
 
 
@@ -40,6 +75,8 @@ class ExpectedFinding:
     message_contains: str | None = None
     file: str | None = None
     severity: Severity | None = None
+    # True/False asserts on `fix` presence; None means don't care.
+    has_fix: bool | None = None
 
 
 @dataclass(frozen=True)

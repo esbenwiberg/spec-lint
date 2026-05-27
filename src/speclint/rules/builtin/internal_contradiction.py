@@ -20,21 +20,24 @@ from typing import Any
 from ...ir.types import SpecIR
 from ..registry import rule
 from ..types import ExpectedFinding, Finding, Fixture
+from ._evidence import find_line
 
 
 _PROMPT_HEADER = (
     "You are reviewing a spec for internal contradictions. The spec is "
-    "split across one or more files, each with line numbers. List ONLY "
-    "clear, high-confidence contradictions where two statements cannot "
-    "both be true at the same time. Do NOT flag scope decisions, "
-    "tradeoffs, design ambiguity, evolving sections, or examples that "
-    "intentionally violate a rule for illustration. Only flag concrete "
-    "logical contradictions between claims about how the system works.\n\n"
+    "split across one or more files. List ONLY clear, high-confidence "
+    "contradictions where two statements cannot both be true at the "
+    "same time. Do NOT flag scope decisions, tradeoffs, design "
+    "ambiguity, evolving sections, or examples that intentionally "
+    "violate a rule for illustration. Only flag concrete logical "
+    "contradictions between claims about how the system works.\n\n"
     "Return ONLY a JSON object with one key, `contradictions`, whose "
-    "value is an array of objects with keys: `file_a`, `line_a`, "
-    "`claim_a` (<=120 chars), `file_b`, `line_b`, `claim_b` (<=120 "
-    "chars), `why` (one sentence). If nothing contradicts, return "
-    "{\"contradictions\": []}. No prose, no markdown, just JSON.\n\n"
+    "value is an array of objects with keys: `file_a`, `quote_a` (a "
+    "VERBATIM substring of the contradicting line in file_a — copy it "
+    "exactly, <=120 chars), `file_b`, `quote_b` (verbatim substring of "
+    "the contradicting line in file_b, <=120 chars), `why` (one "
+    "sentence). If nothing contradicts, return {\"contradictions\": "
+    "[]}. No prose, no markdown, just JSON.\n\n"
 )
 
 
@@ -49,11 +52,9 @@ _FIXTURES = [
             "_llm_call": lambda prompt: json.dumps({
                 "contradictions": [{
                     "file_a": "purpose.md",
-                    "line_a": 3,
-                    "claim_a": "The API supports OAuth ONLY",
+                    "quote_a": "The API supports OAuth ONLY",
                     "file_b": "design.md",
-                    "line_b": 3,
-                    "claim_b": "API keys remain supported for legacy clients",
+                    "quote_b": "API keys remain supported for legacy clients",
                     "why": "OAuth-only and API-keys-supported cannot both hold",
                 }],
             }),
@@ -89,10 +90,10 @@ _FIXTURES = [
         options={
             "_llm_call": lambda prompt: json.dumps({
                 "contradictions": [{
-                    "file_a": "brief.md", "line_a": 3,
-                    "claim_a": "cache MUST be enabled in production",
-                    "file_b": "brief.md", "line_b": 4,
-                    "claim_b": "Caching is disabled in this release",
+                    "file_a": "brief.md",
+                    "quote_a": "cache MUST be enabled in production",
+                    "file_b": "brief.md",
+                    "quote_b": "Caching is disabled in this release",
                     "why": "MUST-enabled vs disabled cannot both hold",
                 }],
             }),
@@ -113,15 +114,15 @@ _FIXTURES = [
         expects=(),
     ),
     Fixture(
-        name="invalid-line-numbers-dropped",
+        name="unresolvable-quote-dropped",
         files={"brief.md": "# x\n\nMUST do X.\n"},
         options={
             "_llm_call": lambda prompt: json.dumps({
                 "contradictions": [{
-                    "file_a": "brief.md", "line_a": 999,
-                    "claim_a": "fake claim a",
-                    "file_b": "brief.md", "line_b": 1000,
-                    "claim_b": "fake claim b",
+                    "file_a": "brief.md",
+                    "quote_a": "totally hallucinated string nowhere in file",
+                    "file_b": "brief.md",
+                    "quote_b": "another phantom quote",
                     "why": "hallucinated",
                 }],
             }),
@@ -134,9 +135,11 @@ _FIXTURES = [
         options={
             "_llm_call": lambda prompt: json.dumps({
                 "contradictions": [{
-                    "file_a": "nonexistent.md", "line_a": 1,
-                    "claim_a": "a", "file_b": "brief.md", "line_b": 3,
-                    "claim_b": "b", "why": "hallucinated file",
+                    "file_a": "nonexistent.md",
+                    "quote_a": "a",
+                    "file_b": "brief.md",
+                    "quote_b": "MUST do X",
+                    "why": "hallucinated file",
                 }],
             }),
         },
@@ -151,11 +154,11 @@ _FIXTURES = [
         options={
             "_llm_call": lambda prompt: json.dumps({
                 "contradictions": [
-                    {"file_a": "a.md", "line_a": 3, "claim_a": "alpha",
-                     "file_b": "b.md", "line_b": 3, "claim_b": "gamma",
+                    {"file_a": "a.md", "quote_a": "Claim alpha",
+                     "file_b": "b.md", "quote_b": "Claim gamma",
                      "why": "first"},
-                    {"file_a": "a.md", "line_a": 4, "claim_a": "beta",
-                     "file_b": "b.md", "line_b": 4, "claim_b": "delta",
+                    {"file_a": "a.md", "quote_a": "Claim beta",
+                     "file_b": "b.md", "quote_b": "Claim delta",
                      "why": "second"},
                 ],
             }),
@@ -190,7 +193,8 @@ def check(ir: SpecIR, config: dict[str, Any]) -> list[Finding]:
         return []
 
     max_lines_per_file = int(config.get("max_lines_per_file", 400))
-    spec_blob = _build_numbered_spec(ir, max_lines_per_file)
+    truncated_text = _truncated_files(ir, max_lines_per_file)
+    spec_blob = _build_spec_blob(truncated_text)
     if not spec_blob.strip():
         return []
 
@@ -209,18 +213,16 @@ def check(ir: SpecIR, config: dict[str, Any]) -> list[Finding]:
     for c in items:
         file_a = c.get("file_a", "")
         file_b = c.get("file_b", "")
-        line_a = _coerce_line(c.get("line_a"))
-        line_b = _coerce_line(c.get("line_b"))
-        if not (file_a and file_b and line_a and line_b):
+        quote_a = (c.get("quote_a") or "").strip()
+        quote_b = (c.get("quote_b") or "").strip()
+        if not (file_a and file_b and quote_a and quote_b):
             continue
-        if file_a not in ir.raw_text or file_b not in ir.raw_text:
+        if file_a not in truncated_text or file_b not in truncated_text:
             continue
-        if not _line_in_range(ir.raw_text[file_a], line_a):
+        line_a = find_line(truncated_text[file_a], quote_a)
+        line_b = find_line(truncated_text[file_b], quote_b)
+        if line_a is None or line_b is None:
             continue
-        if not _line_in_range(ir.raw_text[file_b], line_b):
-            continue
-        claim_a = (c.get("claim_a") or "").strip()
-        claim_b = (c.get("claim_b") or "").strip()
         why = (c.get("why") or "").strip()
         findings.append(
             Finding(
@@ -232,8 +234,8 @@ def check(ir: SpecIR, config: dict[str, Any]) -> list[Finding]:
                     f"Contradicts {file_b}:line {line_b} — {why}"
                 ),
                 hint=(
-                    f"This claim: {claim_a!r}. Conflicting claim: "
-                    f"{claim_b!r}. Reconcile the two or scope the "
+                    f"This claim: {quote_a!r}. Conflicting claim: "
+                    f"{quote_b!r}. Reconcile the two or scope the "
                     "conflict explicitly."
                 ),
             )
@@ -241,19 +243,20 @@ def check(ir: SpecIR, config: dict[str, Any]) -> list[Finding]:
     return findings
 
 
-def _build_numbered_spec(ir: SpecIR, max_lines_per_file: int) -> str:
-    blocks: list[str] = []
+def _truncated_files(ir: SpecIR, max_lines_per_file: int) -> dict[str, str]:
+    out: dict[str, str] = {}
     for rel, text in ir.raw_text.items():
         lines = text.splitlines()
         if len(lines) > max_lines_per_file:
-            lines = lines[:max_lines_per_file] + [
-                f"... [truncated, {len(text.splitlines()) - max_lines_per_file} more lines]"
-            ]
-        numbered = "\n".join(
-            f"{i}: {line}" for i, line in enumerate(lines, start=1)
-        )
-        blocks.append(f"=== {rel} ===\n{numbered}")
-    return "\n\n".join(blocks)
+            lines = lines[:max_lines_per_file]
+        out[rel] = "\n".join(lines)
+    return out
+
+
+def _build_spec_blob(files: dict[str, str]) -> str:
+    return "\n\n".join(
+        f"=== {rel} ===\n{text}" for rel, text in files.items()
+    )
 
 
 def _parse_contradictions(raw: str) -> list[dict[str, Any]]:
@@ -275,13 +278,3 @@ def _parse_contradictions(raw: str) -> list[dict[str, Any]]:
     return [c for c in items if isinstance(c, dict)]
 
 
-def _coerce_line(v: Any) -> int | None:
-    try:
-        n = int(v)
-    except (TypeError, ValueError):
-        return None
-    return n if n > 0 else None
-
-
-def _line_in_range(text: str, line: int) -> bool:
-    return 1 <= line <= max(1, len(text.splitlines()))

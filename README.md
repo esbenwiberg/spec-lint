@@ -10,8 +10,11 @@ in main.
   conventional roots (`specs/`, `docs/specs/`, `features/`, `rfcs/`,
   `.kiro/specs/`, `openspec/`, and more).
 - **Three tiers.** Static (regex/AST), semantic (embeddings,
-  deterministic), LLM (pre-wired, no default rules in v1). Each tier
+  deterministic), LLM (Anthropic/OpenAI/CLI transports). Each tier
   gracefully skips if its dependency isn't installed.
+- **Auto-fix.** Rules can emit a `Patch` alongside their finding.
+  `speclint check --fix` applies safe mechanical rewrites (renames,
+  typos); ambiguous patches are refused. Inspired by ESLint `--fix`.
 - **Opt-in metadata.** Rules that need structured data (status,
   references) read from an optional sidecar YAML you nominate
   (`contract.yaml`, `spec.yml`, `meta.yml`, anything). No schema is
@@ -156,12 +159,16 @@ working on the markdown alone.
 |---|---|---|---|
 | `no-tbd` | static | warn | A `TBD` / `TODO` / `FIXME` / `???` marker is left in spec text. Skipped when sidecar declares `status: draft`. |
 | `no-weasel-words` | static | warn / info | Vague qualifiers split by signal: high-signal (`scalable`, `robust`, `user-friendly`, `intuitive`, `performant`) fire as `warn`; low-signal (`fast`, `just`, `simply`, `easy`, `modern`) fire as `info` because they have a real false-positive rate in code-adjacent prose. |
+| `claims-have-hooks` | static | warn | A claim in the sidecar (e.g. `scenarios[*].id`) is never referenced by any hook entry (e.g. `required_facts[*].proves[*]`). Catches orphan claims that no test or fact covers. Both claim and hook field paths are configurable; accepts list of paths so heterogeneous schemas work. |
 | `refs-resolve` | static | warn | A reference glob in the sidecar matches zero files in the repo. Opt-in via metadata. Field path supports nesting (e.g. `required_facts[*].artifact.path`). |
 | `refs-coupling` | static | warn | The diff touches files under the sidecar's reference list but the spec folder itself isn't updated (Path B). Opt-in via metadata. Same nested-field syntax as `refs-resolve`. |
 | `refs-infer-coupling` | static | info | Path B without a sidecar. Scans the spec's prose for path-shaped tokens, filters to paths that actually exist in the repo, and fires when any of those files change while the spec folder is untouched. Noisier than `refs-coupling`; defaults to `info`. |
 | `heading-redundancy` | semantic | info | Two headings in the same file have near-identical embeddings (likely duplicate sections). |
 | `claim-redundancy` | semantic | info | Two MUST/SHALL claims in the same file have near-identical embeddings (likely duplicate requirement). |
 | `no-weasel-words-llm` | llm | warn | Second-pass classifier: promotes the `info`-tier weasel hits to `warn` when a small model confirms they're real unmeasurable claims (not benign context like product names or code identifiers). Skipped silently when no transport is available. |
+| `spec-impl-drift` | llm | info | Reads the spec's nominated artifacts and asks a model whether the code actually does what the spec promises. Anchors findings at artifact-file:line via verbatim evidence quotes. May emit auto-fix patches for mechanical drifts (renames, typos) — apply with `--fix`. Skipped when no sidecar/artifacts or no transport. |
+| `internal-contradiction` | llm | info | Batches every spec file into one model call; flags pairs of statements that cannot both be true (e.g. `purpose.md` says "OAuth-only", `design.md` says "API keys remain supported"). Findings anchor on `file_a:line` of the contradicting line. |
+| `testability-of-claims` | llm | warn | Classifies each extracted claim (MUST/SHALL/SHOULD/MAY + Gherkin) as TESTABLE or VAGUE. Catches structurally-valid but unmeasurable claims that slip past `no-weasel-words` ("errors are handled gracefully", "supports high concurrency"). |
 
 `refs-coupling` and `refs-infer-coupling` are **Path B** — they're only
 meaningful with a diff context. Pass `--base origin/main` (or
@@ -409,12 +416,18 @@ Two complementary modes:
 
 ## Status
 
-v0.3.0 — eight rules ship across all three tiers, including the first
-default LLM-tier rule (`no-weasel-words-llm`) and a sidecar-free Path B
-rule (`refs-infer-coupling`) that mines spec prose for file mentions.
-Path B coupling reads nested sidecar fields, so contract-style schemas
-work out of the box. 189 tests cover rule behavior, runner branches,
-fixture-based plugin overrides, and transport selection.
+v0.5.0 — 12 rules ship across all three tiers:
+
+- **Static (Tier 1)** — `no-weasel-words`, `no-tbd`, `claims-have-hooks`,
+  `refs-resolve`, `refs-coupling`, `refs-infer-coupling`.
+- **Semantic (Tier 2)** — `claim-redundancy`, `heading-redundancy`.
+- **LLM (Tier 3)** — `no-weasel-words-llm`, `spec-impl-drift`,
+  `internal-contradiction`, `testability-of-claims`.
+
+Tier 3 rules anchor findings to source lines via verbatim evidence
+quotes (LLM-friendly precision) and can emit `Patch` objects for
+mechanical fixes the `--fix` flag will apply. Path B coupling reads
+nested sidecar fields, so contract-style schemas work out of the box.
 
 ## License
 

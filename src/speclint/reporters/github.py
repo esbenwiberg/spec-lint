@@ -19,12 +19,14 @@ def render_github(result: RunResult) -> str:
         if level is None:
             continue
         params = []
-        if f.spec and f.file:
-            # Annotations need a path relative to repo root. The spec name is
-            # the folder under specs/, and f.file is relative to the spec
-            # folder. We can't reconstruct the full repo-relative path here
-            # without knowing the specs glob — but `specs/<spec>/<file>` is
-            # the convention and matches the default config.
+        if f.anchor == "repo" and f.file:
+            # Rule already gave us a repo-root-relative path (e.g.
+            # spec-impl-drift anchoring at an artifact file).
+            params.append(f"file={f.file}")
+        elif f.spec and f.file:
+            # Default: `f.file` is relative to the spec folder. The spec
+            # name is the folder under specs/, so `specs/<spec>/<file>`
+            # is the convention and matches the default config.
             params.append(f"file=specs/{f.spec}/{f.file}")
         elif f.file:
             params.append(f"file={f.file}")

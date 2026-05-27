@@ -8,6 +8,7 @@ import click
 from . import __version__
 from . import diff as _diff
 from .config import load_config
+from .fixes import apply_fixes, count_fixable
 from .llm import probe_transports, select_transport
 from .reporters import render_github, render_human, render_json, render_markdown
 from .rules.registry import SpecLintError
@@ -62,8 +63,19 @@ def main(ctx: click.Context, version: bool) -> None:
         "Mutually exclusive with --base."
     ),
 )
+@click.option(
+    "--fix",
+    "apply_fix",
+    is_flag=True,
+    default=False,
+    help=(
+        "Apply auto-fix patches emitted by rules. Rewrites files in "
+        "place; review the diff before committing."
+    ),
+)
 def check(repo_root: str, output_format: str, fail_on: str | None,
-          base: str | None, changed_files_from: str | None) -> None:
+          base: str | None, changed_files_from: str | None,
+          apply_fix: bool) -> None:
     """Lint spec folders under REPO_ROOT (default: current directory)."""
     if base and changed_files_from:
         click.echo("speclint: --base and --changed-files-from are mutually exclusive", err=True)
@@ -84,6 +96,18 @@ def check(repo_root: str, output_format: str, fail_on: str | None,
         click.echo(f"speclint: {e}", err=True)
         sys.exit(2)
 
+    if apply_fix:
+        fix_result = apply_fixes(root, result.findings)
+        click.echo(
+            f"[fix] applied {len(fix_result.applied)}, "
+            f"skipped {len(fix_result.skipped)}",
+            err=True,
+        )
+        for path, rule_id in fix_result.applied:
+            click.echo(f"[fix]   ✓ {path}  ({rule_id})", err=True)
+        for path, rule_id, reason in fix_result.skipped:
+            click.echo(f"[fix]   ✗ {path}  ({rule_id}): {reason}", err=True)
+
     renderers = {
         "human": render_human,
         "json": render_json,
@@ -91,6 +115,10 @@ def check(repo_root: str, output_format: str, fail_on: str | None,
         "github": render_github,
     }
     click.echo(renderers[output_format](result), nl=False)
+
+    fixable = count_fixable(result.findings)
+    if fixable and not apply_fix and output_format == "human":
+        click.echo(f"\n{fixable} finding(s) auto-fixable — rerun with --fix to apply.")
 
     sys.exit(exit_code_for(result, cfg.fail_on))
 

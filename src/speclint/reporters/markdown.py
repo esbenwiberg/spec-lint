@@ -76,9 +76,12 @@ def render_markdown(result: RunResult) -> str:
             loc = f.file or ""
             if f.line is not None:
                 loc = f"{loc}:{f.line}"
+            msg = _escape(f.message)
+            if f.fix is not None:
+                msg = f"🔧 {msg}"
             buf.write(
                 f"| {_BADGE.get(f.severity, f.severity)} | `{f.rule_id}` | "
-                f"`{_escape(loc)}` | {_escape(f.message)} |\n"
+                f"`{_escape(loc)}` | {msg} |\n"
             )
         buf.write("\n")
 
