@@ -10,6 +10,7 @@ from ..registry import collect_rules_from
 def register() -> dict:
     from . import (
         claim_redundancy,
+        claims_have_hooks,
         heading_redundancy,
         no_tbd,
         no_weasel_words,
@@ -17,10 +18,12 @@ def register() -> dict:
         refs_coupling,
         refs_infer_coupling,
         refs_resolve,
+        spec_impl_drift,
     )
 
     return collect_rules_from(
         claim_redundancy,
+        claims_have_hooks,
         heading_redundancy,
         no_tbd,
         no_weasel_words,
@@ -28,4 +31,5 @@ def register() -> dict:
         refs_coupling,
         refs_infer_coupling,
         refs_resolve,
+        spec_impl_drift,
     )
