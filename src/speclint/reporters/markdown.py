@@ -52,7 +52,7 @@ def render_markdown(result: RunResult) -> str:
         buf.write(
             f"> _fastembed not installed — semantic rules skipped: "
             f"`{', '.join(result.rules_skipped_semantic)}`. "
-            f"Install with `pip install 'spec-lint[semantic]'`._\n\n"
+            f"Install with `pip install 'speclint[semantic]'`._\n\n"
         )
 
     if not result.findings:

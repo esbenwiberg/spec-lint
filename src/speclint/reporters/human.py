@@ -22,7 +22,7 @@ def render_human(result: RunResult) -> str:
             f"[semantic] fastembed not installed; skipping "
             f"{len(result.rules_skipped_semantic)} rule(s): "
             f"{', '.join(result.rules_skipped_semantic)}\n"
-            f"           hint: pip install 'spec-lint[semantic]'\n"
+            f"           hint: pip install 'speclint[semantic]'\n"
         )
     elif result.embedder_chosen:
         buf.write(f"[semantic] embedder: {result.embedder_chosen}\n")

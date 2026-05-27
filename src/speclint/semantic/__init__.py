@@ -4,7 +4,7 @@ Two embedder implementations, both honoring the `Embedder` protocol:
 
   - `FastembedEmbedder` — production. Wraps fastembed (ONNX runtime,
     BAAI/bge-small-en-v1.5 by default). Lazy import so the core install
-    stays light; opt-in via `pip install spec-lint[semantic]`.
+    stays light; opt-in via `pip install speclint[semantic]`.
 
   - `BagOfTokensEmbedder` — test/fallback. Pure-Python token-frequency
     vectorizer, no deps. Not as good as a real embedding model, but
@@ -88,7 +88,7 @@ class FastembedEmbedder:
         if not fastembed_available():
             raise SemanticUnavailable(
                 "fastembed is not installed. "
-                "Install with: pip install 'spec-lint[semantic]'"
+                "Install with: pip install 'speclint[semantic]'"
             )
         self._model_name = model
         self._impl = None  # populated on first embed()
